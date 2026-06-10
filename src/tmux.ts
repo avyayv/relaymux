@@ -52,7 +52,7 @@ export function setWindowMetadata(windowTarget, metadata) {
   }
 }
 
-export function listAgentWindows({ session } = {}) {
+export function listAgentWindows({ session }: any = {}) {
   const args = session
     ? ["list-windows", "-t", session, "-F", WINDOW_FORMAT]
     : ["list-windows", "-a", "-F", WINDOW_FORMAT];

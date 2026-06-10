@@ -6,7 +6,7 @@ import { findExecutable } from "./doctor.js";
 import { expandPath } from "./paths.js";
 import { runCommand } from "./process.js";
 
-export function buildImsgConfig(options = {}, env = process.env) {
+export function buildImsgConfig(options: any = {}, env = process.env) {
   const base = defaultConfig();
   const stateDir = options.stateDir || base.stateDir;
   const sessionDir = path.posix.join(stateDir, "sessions");
@@ -79,7 +79,7 @@ export function buildImsgConfig(options = {}, env = process.env) {
   };
 }
 
-export function discoverImsgChats({ imsgPath = "imsg", limit = 20, env = process.env } = {}) {
+export function discoverImsgChats({ imsgPath = "imsg", limit = 20, env = process.env }: any = {}) {
   const result = runCommand(imsgPath, ["chats", "--limit", String(limit), "--json"], { allowFailure: true, env });
   if (result.status !== 0) {
     throw new Error(result.stderr.trim() || `${imsgPath} chats failed with ${result.status}`);
@@ -87,7 +87,7 @@ export function discoverImsgChats({ imsgPath = "imsg", limit = 20, env = process
   return parseJsonOrJsonl(result.stdout).map(normalizeChat).filter((chat) => chat.id);
 }
 
-export async function resolveImsgChatId(flags, io, env = process.env) {
+export async function resolveImsgChatId(flags: any, io: any, env = process.env) {
   if (flags.chatId) return String(flags.chatId);
   if (flags.recipient) return String(flags.recipient);
 

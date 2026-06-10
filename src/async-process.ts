@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-export function runCommandAsync(command, args = [], options = {}) {
+export function runCommandAsync(command: string, args: string[] = [], options: any = {}): Promise<any> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
@@ -38,7 +38,7 @@ export function runCommandAsync(command, args = [], options = {}) {
       else stderr += text;
       if (stdout.length + stderr.length > maxBuffer) {
         child.kill("SIGTERM");
-        const error = new Error(`command output exceeded ${maxBuffer} bytes`);
+        const error: any = new Error(`command output exceeded ${maxBuffer} bytes`);
         error.stdout = stdout;
         error.stderr = stderr;
         finish(reject, error);
@@ -48,7 +48,7 @@ export function runCommandAsync(command, args = [], options = {}) {
     child.stdout.on("data", (chunk) => append("stdout", chunk));
     child.stderr.on("data", (chunk) => append("stderr", chunk));
 
-    child.on("error", (error) => {
+    child.on("error", (error: any) => {
       error.stdout = stdout;
       error.stderr = stderr;
       finish(reject, error);
@@ -58,13 +58,13 @@ export function runCommandAsync(command, args = [], options = {}) {
       const code = status ?? 1;
       const result = { status: code, signal, stdout, stderr };
       if (timedOut) {
-        const error = new Error(`${command} timed out after ${options.timeoutMs}ms`);
+        const error: any = new Error(`${command} timed out after ${options.timeoutMs}ms`);
         Object.assign(error, result);
         finish(reject, error);
         return;
       }
       if (code !== 0 && !options.allowFailure) {
-        const error = new Error(stderr.trim() || `${command} ${args.join(" ")} exited with ${code}`);
+        const error: any = new Error(stderr.trim() || `${command} ${args.join(" ")} exited with ${code}`);
         Object.assign(error, result);
         finish(reject, error);
         return;

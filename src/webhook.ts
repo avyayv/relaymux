@@ -96,7 +96,7 @@ export function rememberWebhookIdempotencyKey(state, key, { max = 1000 } = {}) {
   return { duplicate: false };
 }
 
-export async function createCompletionWebhookServer({ config, state, saveState, enqueue, getStatus, io = console }) {
+export async function createCompletionWebhookServer({ config, state, saveState, enqueue, getStatus, io = console }: any) {
   const resolved = webhookConfig(config);
   if (!isLocalWebhookHost(resolved.host)) {
     io.warn?.(`agentmux daemon: refusing to bind non-loopback webhook host ${resolved.host}`);
@@ -248,7 +248,7 @@ function tokenMatches(expected, supplied) {
 }
 
 function httpError(statusCode, message) {
-  const error = new Error(message);
+  const error: any = new Error(message);
   error.statusCode = statusCode;
   return error;
 }

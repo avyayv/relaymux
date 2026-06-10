@@ -111,7 +111,7 @@ export async function receiveMessages(config) {
   return normalizeMessages(parseMessageOutput(result.stdout));
 }
 
-export async function sendMessage(config, text, io = process) {
+export async function sendMessage(config: any, text: string, io: any = process) {
   const imessage = config.imessage || {};
   const send = imessage.send || {};
   const maxReplyChars = Number(imessage.maxReplyChars || 1400);

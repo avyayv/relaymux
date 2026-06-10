@@ -100,7 +100,7 @@ async function postCompletionWebhook(config, flags, event) {
   const token = fs.readFileSync(tokenFile, "utf8").trim();
   if (!token) throw new Error(`token file is empty: ${tokenFile}`);
 
-  let metadata = {};
+  let metadata: Record<string, any> = {};
   if (flags.metadataJson) {
     metadata = JSON.parse(flags.metadataJson);
     if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {

@@ -4,19 +4,20 @@
   "description": "Talk to a local Pi orchestrator over iMessage/SMS and delegate coding agents into tmux tabs.",
   "type": "module",
   "bin": {
-    "agentmux": "./bin/agentmux.js"
+    "agentmux": "./dist/bin/agentmux.js"
   },
   "files": [
-    "bin",
-    "src",
+    "dist",
     "examples",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "lint": "node --check bin/agentmux.js && for f in src/*.js test/*.js; do node --check \"$f\"; done",
-    "test": "node --test",
-    "validate": "npm run lint && npm test && npm pack --dry-run"
+    "build": "tsc && node -e \"require('fs').chmodSync('dist/bin/agentmux.js', 0o755)\"",
+    "lint": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "prepack": "npm run build",
+    "validate": "npm run lint && npm test && npm run build && npm pack --dry-run"
   },
   "keywords": [
     "agents",
@@ -36,5 +37,10 @@
   "bugs": {
     "url": "https://github.com/avyayv/agentmux/issues"
   },
-  "homepage": "https://github.com/avyayv/agentmux#readme"
+  "homepage": "https://github.com/avyayv/agentmux#readme",
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
 }

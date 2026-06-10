@@ -45,7 +45,7 @@ export function buildAgentInvocation(agentName, agentConfig, context) {
   );
 
   const argv = agentConfig.command.map((part) => renderTemplate(part, templateContext));
-  const env = {};
+  const env: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(agentConfig.env ?? {})) {
     if (!ENV_KEY.test(key)) {

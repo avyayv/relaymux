@@ -180,7 +180,7 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
     pollOnce().catch((error) => warn("poll failed:", describeError(error)));
   }, Number(config.imessage?.pollMs || 3000));
 
-  await new Promise((resolve) => {
+  await new Promise<void>((resolve) => {
     const shutdown = async (signal) => {
       log(`shutting down (${signal})`);
       clearInterval(interval);
@@ -235,7 +235,7 @@ async function drainIfOnce(flags, processQueue) {
 }
 
 async function closeServer(server) {
-  await new Promise((resolve) => server.close(() => resolve()));
+  await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
 function describeError(error) {

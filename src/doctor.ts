@@ -86,7 +86,7 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
     detail: launchAgentPath(config),
   });
 
-  for (const [name, agent] of Object.entries(config.agents ?? {})) {
+  for (const [name, agent] of Object.entries((config.agents ?? {}) as Record<string, any>)) {
     const command = Array.isArray(agent.command) ? agent.command[0] : "";
     const executable = findExecutable(command, env);
     checks.push({

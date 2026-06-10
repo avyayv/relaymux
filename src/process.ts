@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 
-export function runCommand(command, args, options = {}) {
+export function runCommand(command: string, args: string[] = [], options: any = {}): any {
   const result = spawnSync(command, args, {
     cwd: options.cwd,
     encoding: "utf8",

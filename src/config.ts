@@ -98,7 +98,7 @@ export function defaultConfigPath(env = process.env) {
   return path.join(base, "agentmux", "config.json");
 }
 
-export function loadConfig({ configPath, env = process.env } = {}) {
+export function loadConfig({ configPath, env = process.env }: any = {}) {
   const resolvedPath = expandPath(configPath || defaultConfigPath(env));
   if (!fs.existsSync(resolvedPath)) {
     return { config: defaultConfig(), path: resolvedPath, exists: false };

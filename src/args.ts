@@ -18,8 +18,8 @@ export function parseArgv(argv) {
   const tokens = [...argv];
   let command = null;
 
-  const flags = {};
-  const positionals = [];
+  const flags: Record<string, any> = {};
+  const positionals: string[] = [];
 
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i];
