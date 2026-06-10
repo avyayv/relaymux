@@ -1,0 +1,38 @@
+{
+  "name": "agentmux",
+  "version": "0.1.0",
+  "description": "Run local coding agents in organized tmux sessions.",
+  "type": "module",
+  "bin": {
+    "agentmux": "./bin/agentmux.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "lint": "node --check bin/agentmux.js && for f in src/*.js test/*.js; do node --check \"$f\"; done",
+    "test": "node --test",
+    "validate": "npm run lint && npm test && npm pack --dry-run"
+  },
+  "keywords": [
+    "agents",
+    "tmux",
+    "orchestration",
+    "cli"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/avyayv/agentmux.git"
+  },
+  "bugs": {
+    "url": "https://github.com/avyayv/agentmux/issues"
+  },
+  "homepage": "https://github.com/avyayv/agentmux#readme"
+}
