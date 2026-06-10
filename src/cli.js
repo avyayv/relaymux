@@ -5,12 +5,13 @@ import { randomUUID } from "node:crypto";
 import { parseArgv } from "./args.js";
 import { buildAgentInvocation, buildTmuxShellCommand, buildTmuxShellScript, quoteArgv } from "./command.js";
 import { collectDoctorChecks } from "./doctor.js";
-import { defaultConfigPath, loadConfig, resolveStateDir, writeDefaultConfig } from "./config.js";
+import { defaultConfigPath, loadConfig, resolveStateDir, writeConfig, writeDefaultConfig } from "./config.js";
 import { runDaemon } from "./daemon.js";
 import { installLaunchAgent, launchAgentPath, uninstallLaunchAgent } from "./launch-agent.js";
 import { handleNotify } from "./notify.js";
 import { webhookStatus } from "./webhook.js";
 import { expandPath, ensureDirectory, pathExists, readTextFile } from "./paths.js";
+import { buildImsgConfig, initOptionsFromFlags, resolveImsgChatId } from "./setup-imsg.js";
 import { latestEventsByRun, readRuns, recordRun, writePromptFile, writeScriptFile } from "./state.js";
 import { createAgentWindow, listAgentWindows, sendShellCommand, setWindowMetadata, validateSessionName } from "./tmux.js";
 import { createWorktree, resolveRepoAndWorkdir } from "./worktree.js";
@@ -67,9 +68,30 @@ export async function main(argv, io = defaultIo()) {
   }
 }
 
-function handleInit(flags, io) {
+async function handleInit(flags, io) {
+  if (flags.imsg || flags.preset === "imsg") {
+    const chatId = await resolveImsgChatId(flags, io, io.env);
+    const config = buildImsgConfig({
+      ...initOptionsFromFlags(flags),
+      chatId,
+    }, io.env);
+    const target = writeConfig(flags.config || defaultConfigPath(io.env), config, { force: Boolean(flags.force) });
+    io.stdout.write(`Created ${target} with imsg defaults\n`);
+    io.stdout.write("Next: agentmux doctor && agentmux daemon\n");
+    if (flags.installLaunchAgent) {
+      installLaunchAgent({
+        flags: { load: flags.load },
+        configInfo: { config, path: target, exists: true },
+        binPath: process.argv[1],
+        io,
+      });
+    }
+    return 0;
+  }
+
   const target = writeDefaultConfig(flags.config || defaultConfigPath(io.env), { force: Boolean(flags.force) });
   io.stdout.write(`Created ${target}\n`);
+  io.stdout.write("Tip: use `agentmux init --imsg` for an imsg-based setup wizard.\n");
   return 0;
 }
 
@@ -317,6 +339,7 @@ function formatTable(rows, columns) {
 function defaultIo() {
   return {
     env: process.env,
+    stdin: process.stdin,
     stdout: process.stdout,
     stderr: process.stderr,
   };
@@ -327,6 +350,7 @@ function helpText() {
 
 Usage:
   agentmux init [--force] [--config <path>]
+  agentmux init --imsg [--chat-id <id>] [--install-launch-agent]
   agentmux daemon [--once]
   agentmux install-launch-agent [--dry-run] [--no-load]
   agentmux uninstall-launch-agent
@@ -334,6 +358,13 @@ Usage:
   agentmux status [--json] [--session <name>] [--all]
   agentmux notify [--run-id <id>] [--reply-mode imessage|none] [--message <text>]
   agentmux doctor
+
+Init options:
+  --imsg                    Create an imsg-based config and prompt for a chat when possible
+  --chat-id <id>            Messages chat id/phone for imsg history/send
+  --cwd <path>              Working directory for Pi and message commands
+  --state-dir <path>        State/session/token directory
+  --install-launch-agent    Install the LaunchAgent after writing config
 
 Launch options:
   --prompt-file <path>       Read prompt from a file

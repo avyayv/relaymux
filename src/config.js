@@ -113,12 +113,16 @@ export function loadConfig({ configPath, env = process.env } = {}) {
 }
 
 export function writeDefaultConfig(configPath, { force = false } = {}) {
+  return writeConfig(configPath, defaultConfig(), { force });
+}
+
+export function writeConfig(configPath, config, { force = false } = {}) {
   const resolvedPath = expandPath(configPath || defaultConfigPath());
   if (fs.existsSync(resolvedPath) && !force) {
     throw new Error(`Config already exists at ${resolvedPath}. Use --force to overwrite.`);
   }
   fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
-  fs.writeFileSync(resolvedPath, `${JSON.stringify(defaultConfig(), null, 2)}\n`, { mode: 0o600 });
+  fs.writeFileSync(resolvedPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   return resolvedPath;
 }
 

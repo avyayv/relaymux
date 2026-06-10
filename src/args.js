@@ -6,6 +6,8 @@ const BOOLEAN_FLAGS = new Set([
   "force",
   "help",
   "hold",
+  "imsg",
+  "install-launch-agent",
   "json",
   "once",
   "print-command",

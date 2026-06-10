@@ -8,46 +8,22 @@ It is local-first and repo-agnostic: you bring your own Pi command, message send
 
 ```bash
 npm install -g agentmux
-agentmux init
+agentmux init --imsg
 ```
 
-Then edit:
+The imsg setup finds your local `imsg` and `pi` commands, prompts for the Messages chat to use, and writes:
 
 ```text
 ~/.config/agentmux/config.json
 ```
 
-At minimum, configure three things:
+If you already know the chat id, skip the prompt:
 
-```json
-{
-  "imessage": {
-    "chatId": "CHAT_ID_OR_PHONE",
-    "receive": {
-      "command": {
-        "argv": ["imsg", "history", "--chat-id", "{chatId}", "--limit", "{limit}", "--json"]
-      }
-    },
-    "send": {
-      "command": {
-        "argv": ["imsg", "send", "--chat-id", "{chatId}", "--text", "{text}", "--json"]
-      }
-    }
-  },
-  "orchestrator": {
-    "command": ["pi", "{prompt}"],
-    "promptMode": "arg"
-  },
-  "agents": {
-    "pi": {
-      "command": ["pi", "{prompt}"],
-      "promptMode": "arg"
-    }
-  }
-}
+```bash
+agentmux init --imsg --chat-id 1
 ```
 
-`imsg` is only an example. Any command is fine as long as receive prints JSON/JSONL messages and send accepts `{text}`.
+`imsg` is the built-in preset. You can still edit the config later to use a different message CLI, as long as receive prints JSON/JSONL messages and send accepts `{text}`.
 
 ## Run it
 
