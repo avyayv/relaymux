@@ -1,18 +1,15 @@
 # agentmux
 
-`agentmux` runs multiple coding agents in tmux and keeps them organized.
+`agentmux` packages a local Pi/iMessage orchestrator pattern:
 
-Use it when you want three agents reviewing the same repo, a separate agent doing implementation, and a final agent collecting the results without losing track of which terminal belongs to which run.
+1. You text a private iMessage/SMS chat.
+2. A local macOS daemon polls that chat with a configurable receive command.
+3. Pi acts as the orchestrator brain with a clean, generic prompt.
+4. Pi can delegate coding work into tmux tabs with configurable agent commands.
+5. Subagents report completion through a localhost-only webhook via `agentmux notify`.
+6. The daemon sends concise replies back with a configurable send command.
 
-It is local-first and repo-agnostic:
-
-- launches agent commands in tmux windows
-- passes a repo or worktree as the working directory
-- stores run metadata and completion events locally
-- lets agents report progress with `agentmux notify`
-- supports optional command or webhook notifications, disabled by default
-
-There is no durable loop runner in this package. It only launches, tracks, and reports local tmux-backed agent runs.
+The project is repo-agnostic. It ships no personal context, secrets, phone numbers, or company-specific assumptions. There is intentionally no durable `/loop` feature.
 
 ## Install
 
@@ -25,300 +22,249 @@ For local development:
 ```bash
 npm install
 npm link
-agentmux doctor
+npm run validate
 ```
 
-## Quick Start
+## Prerequisites
 
-Create the config:
+- macOS if you want iMessage/SMS integration.
+- `tmux` for delegated agent tabs.
+- A Pi CLI command that can be invoked non-interactively, configured in `orchestrator.command`.
+- A message helper command for receive/send. `agentmux` does **not** hard-code a specific Messages tool. If you use `imsg`, configure it in `config.json`.
+- Optional agent CLIs such as `pi`, `codex`, or `claude` for subagents.
+
+## Quick start
+
+Create a config:
 
 ```bash
 agentmux init
+$EDITOR ~/.config/agentmux/config.json
 ```
 
-Launch an agent:
+Edit placeholders:
+
+- `imessage.chatId` / `imessage.recipient`
+- `imessage.receive.command.argv`
+- `imessage.send.command.argv`
+- `orchestrator.command`
+- `agents.*.command`
+- `daemon.tokenFile`, `daemon.port`, `session`
+
+Run checks:
+
+```bash
+agentmux doctor
+```
+
+Start the daemon in the foreground:
+
+```bash
+agentmux daemon
+```
+
+Install it as a macOS LaunchAgent:
+
+```bash
+agentmux install-launch-agent
+# unload/remove later:
+agentmux uninstall-launch-agent
+```
+
+## Config shape
+
+Default config path:
+
+```text
+~/.config/agentmux/config.json
+```
+
+`agentmux init` writes a starter config with placeholders like:
+
+```json
+{
+  "session": "agents",
+  "stateDir": "~/.local/state/agentmux",
+  "imessage": {
+    "chatId": "CHAT_ID_OR_PHONE",
+    "recipient": "+15555550123",
+    "pollMs": 3000,
+    "syncLimit": 5,
+    "receive": {
+      "backend": "command",
+      "command": {
+        "argv": ["imsg", "history", "--chat-id", "{chatId}", "--limit", "{limit}", "--json"]
+      }
+    },
+    "send": {
+      "backend": "command",
+      "command": {
+        "argv": ["imsg", "send", "--chat-id", "{chatId}", "--text", "{text}", "--json"]
+      }
+    }
+  },
+  "daemon": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 47761,
+    "tokenFile": "~/.local/state/agentmux/webhook-token"
+  },
+  "orchestrator": {
+    "cwd": "~",
+    "command": ["pi", "{prompt}"],
+    "promptMode": "arg"
+  },
+  "agents": {
+    "pi": { "command": ["pi", "{prompt}"], "promptMode": "arg" },
+    "codex": { "command": ["codex", "--model", "gpt-5.5", "--reasoning-effort", "xhigh", "{prompt}"], "promptMode": "arg" }
+  }
+}
+```
+
+Command arrays are executed without a shell. Placeholders include:
+
+- message IO: `{chatId}`, `{recipient}`, `{limit}`, `{text}`
+- agent commands: `{prompt}`, `{promptFile}`, `{repo}`, `{workdir}`, `{name}`, `{runId}`, `{agent}`
+
+Receive commands must print JSON or JSONL messages. Common fields are normalized: `id`, `guid`, `text`, `body`, `is_from_me`, `isFromMe`, `created_at`, `createdAt`, and `attachments`.
+
+## Delegating subagents
+
+Manual launch:
 
 ```bash
 agentmux launch \
   --repo ~/code/my-app \
   --agent codex \
-  --name review-api \
-  --prompt "Review the API layer for correctness bugs. Send a short summary with agentmux notify."
+  --name fix-api \
+  --prompt "Fix the API bug. Validate with npm test. Report completion with agentmux notify."
+```
+
+Launch from a worktree:
+
+```bash
+agentmux launch \
+  --repo ~/code/my-app \
+  --worktree ~/code/my-app-fix-api \
+  --create-worktree \
+  --worktree-branch agentmux/fix-api \
+  --agent pi \
+  --name fix-api \
+  --prompt-file prompts/fix-api.md
 ```
 
 Check status:
 
 ```bash
 agentmux status
-```
-
-Attach to the tmux session:
-
-```bash
-tmux attach -t agents
-```
-
-## Config
-
-The default config path is:
-
-```text
-~/.config/agentmux/config.json
-```
-
-`agentmux init` writes a starter config like this:
-
-```json
-{
-  "version": 1,
-  "session": "agents",
-  "stateDir": "~/.local/state/agentmux",
-  "holdOnExit": false,
-  "agents": {
-    "pi": {
-      "command": ["pi", "{prompt}"],
-      "promptMode": "arg"
-    },
-    "codex": {
-      "command": ["codex", "--model", "gpt-5.5", "--reasoning-effort", "xhigh", "{prompt}"],
-      "promptMode": "arg"
-    },
-    "claude": {
-      "command": ["claude", "{prompt}"],
-      "promptMode": "arg"
-    }
-  },
-  "notifier": {
-    "command": {
-      "enabled": false,
-      "argv": []
-    },
-    "webhook": {
-      "enabled": false,
-      "url": "",
-      "headers": {}
-    }
-  }
-}
-```
-
-Agent commands are argv arrays, not shell strings. `agentmux` renders placeholders and shell-quotes every argv token before handing the wrapper command to tmux.
-
-Supported placeholders:
-
-- `{prompt}`: prompt text
-- `{promptFile}`: path to a local prompt file
-- `{repo}`: original repo path
-- `{workdir}`: repo or worktree path used as the tmux working directory
-- `{name}`: run name
-- `{runId}`: run id
-- `{agent}`: agent name
-
-Prompt modes:
-
-- `arg`: append the prompt as an argument when no prompt placeholder is present
-- `stdin`: redirect the prompt file into the agent command
-- `env`: expose the prompt as `AGENTMUX_PROMPT`
-- `none`: do not pass the prompt automatically
-
-## Commands
-
-### `agentmux init`
-
-Creates the config file.
-
-```bash
-agentmux init
-agentmux init --force
-agentmux init --config ./agentmux.config.json
-```
-
-### `agentmux launch`
-
-Starts an agent in a tmux window.
-
-```bash
-agentmux launch \
-  --repo ~/code/my-app \
-  --agent codex \
-  --prompt-file ./prompts/review.md \
-  --name review-api
-```
-
-Useful options:
-
-- `--session <name>`: override the tmux session name
-- `--dry-run`: print the tmux command without launching it
-- `--print-command`: print the tmux command before launching
-- `--hold`: keep a shell open after the agent exits
-- `--attach`: print the tmux attach command after launch
-
-### `agentmux status`
-
-Lists runs launched by `agentmux`, their tmux targets, and the latest local event.
-
-```bash
-agentmux status
 agentmux status --json
-agentmux status --all
 ```
 
-### `agentmux notify`
+## Subagent completion webhook
 
-Records a local event for a run. Agent prompts can ask subagents to call this directly.
+The daemon exposes localhost-only endpoints:
+
+- `GET /health`
+- `POST /message`
+- `POST /agent-message`
+
+The bearer token is generated at `daemon.tokenFile` with mode `0600`.
+
+Ask subagents to use the helper:
 
 ```bash
 agentmux notify \
-  --run-id "$AGENTMUX_RUN_ID" \
-  --event summary \
-  --message "Found two likely API validation bugs."
+  --from build-agent \
+  --reply-mode imessage \
+  --idempotency-key "build-agent:job-123:done" \
+  --message "Finished the build fix. npm test passed. No blockers."
 ```
 
-The tmux wrapper automatically records `started` and `completed` events.
-
-### `agentmux doctor`
-
-Checks tmux, config, and whether configured agent executables are on `PATH`.
+Quiet context update:
 
 ```bash
-agentmux doctor
+agentmux notify \
+  --from build-agent \
+  --reply-mode none \
+  --idempotency-key "build-agent:job-123:checkpoint-1" \
+  --message "Still running tests; no user-visible update needed."
 ```
 
-Missing agents do not fail `doctor`; one machine might only have `codex`, while another only has `claude`.
+If `daemon.enabled` is `false`, `agentmux notify --reply-mode ...` writes the event to stdout instead of posting.
 
-## Worktrees
+## LaunchAgent
 
-Worktree support is generic and opt-in. `agentmux` does not assume a repo layout, branch naming scheme, or worktree directory.
-
-Launch from an existing worktree:
+Preview the plist:
 
 ```bash
-agentmux launch \
-  --repo ~/code/my-app \
-  --worktree ~/code/my-app-review-api \
-  --agent codex \
-  --name review-api \
-  --prompt-file ./prompts/review-api.md
+agentmux install-launch-agent --dry-run
 ```
 
-Create a worktree before launch:
+Install and load:
 
 ```bash
-agentmux launch \
-  --repo ~/code/my-app \
-  --worktree ~/code/my-app-review-ui \
-  --create-worktree \
-  --worktree-branch agentmux/review-ui \
-  --worktree-from main \
-  --agent codex \
-  --name review-ui \
-  --prompt-file ./prompts/review-ui.md
+agentmux install-launch-agent
 ```
 
-## Example: Three Review Agents And A Fan-In Agent
-
-Create focused prompts:
-
-```bash
-mkdir -p prompts
-$EDITOR prompts/review-api.md
-$EDITOR prompts/review-ui.md
-$EDITOR prompts/review-tests.md
-$EDITOR prompts/fan-in.md
-```
-
-Launch three review agents:
-
-```bash
-agentmux launch --repo ~/code/my-app --agent codex --name review-api --prompt-file prompts/review-api.md
-agentmux launch --repo ~/code/my-app --agent codex --name review-ui --prompt-file prompts/review-ui.md
-agentmux launch --repo ~/code/my-app --agent codex --name review-tests --prompt-file prompts/review-tests.md
-```
-
-In each prompt, ask the agent to finish with:
-
-```bash
-agentmux notify --run-id "$AGENTMUX_RUN_ID" --event summary --message "<one-paragraph summary>"
-```
-
-Then launch a fan-in agent:
-
-```bash
-agentmux launch \
-  --repo ~/code/my-app \
-  --agent codex \
-  --name fan-in \
-  --prompt-file prompts/fan-in.md
-```
-
-The fan-in prompt can ask the agent to inspect:
-
-```bash
-agentmux status --json
-```
-
-## Optional Notifications
-
-Notifications are disabled by default. They are intentionally generic.
-
-Command notifier:
-
-```json
-{
-  "notifier": {
-    "command": {
-      "enabled": true,
-      "argv": ["terminal-notifier", "-title", "agentmux", "-message", "{name}: {event} {message}"]
-    }
-  }
-}
-```
-
-Webhook notifier:
-
-```json
-{
-  "notifier": {
-    "webhook": {
-      "enabled": true,
-      "url": "https://example.com/agentmux-events",
-      "headers": {
-        "authorization": "Bearer replace-me"
-      }
-    }
-  }
-}
-```
-
-Do not put secrets in a shared config file. Prefer local config files, environment-specific wrappers, or a secret manager for real tokens.
-
-## Local State
-
-By default, local state is written to:
+The generated plist runs:
 
 ```text
-~/.local/state/agentmux/
+node <agentmux bin> --config <config path> daemon
 ```
 
-Files:
+Logs go to `daemon.logDir`.
 
-- `runs.jsonl`: one record per launched run
-- `events.jsonl`: `notify`, `started`, and `completed` events
-- `prompts/`: prompt snapshots used by launched runs
+## Mock smoke test (no real iMessages)
 
-## Safety Notes
-
-- Agent commands are configured as argv arrays.
-- `agentmux` does not use `eval` on config.
-- The final tmux wrapper is a shell command because tmux accepts a shell command string; argv tokens are quoted before insertion.
-- Use `--dry-run` or `--print-command` to inspect what will run.
-- Notifier command integration also uses argv arrays, not shell strings.
-
-## Development
+Use the mock config to exercise the daemon and webhook without sending messages:
 
 ```bash
-npm install
-npm run validate
+rm -rf /tmp/agentmux-mock
+mkdir -p /tmp/agentmux-mock
+node ./bin/agentmux.js --config examples/config.mock.json daemon &
+DAEMON_PID=$!
+sleep 1
+node ./bin/agentmux.js --config examples/config.mock.json notify \
+  --from smoke \
+  --reply-mode imessage \
+  --idempotency-key smoke-1 \
+  --message "Smoke completion"
+sleep 1
+cat /tmp/agentmux-mock/outbox.txt
+kill "$DAEMON_PID"
 ```
 
-The test suite covers argument parsing, config loading, template rendering, prompt passing, and shell quoting.
+Tmux smoke:
+
+```bash
+node ./bin/agentmux.js --config examples/config.mock.json launch \
+  --repo "$PWD" \
+  --session agentmux-smoke \
+  --agent custom \
+  --name smoke \
+  --prompt "hello from smoke"
+node ./bin/agentmux.js --config examples/config.mock.json status --session agentmux-smoke
+```
+
+## Security and privacy
+
+- The completion webhook only binds loopback hosts (`127.0.0.1`, `localhost`, or `::1`).
+- Webhook requests require a bearer token read from `daemon.tokenFile`.
+- `agentmux` never ships or requires phone numbers, private prompts, tokens, or repo-specific context.
+- Command adapters are explicit argv arrays, not shell strings. If you choose to invoke a shell, that is visible in your config.
+- Keep config/token file permissions tight and avoid putting secrets in prompts or subagent completion messages.
+- The daemon marks existing incoming messages as seen on first start so it does not replay your history.
+
+## Limitations
+
+- No durable `/loop` scheduler.
+- Message IO depends on whatever receive/send commands you configure.
+- The orchestrator command should be non-interactive. If your Pi command opens a TUI, configure Pi's print/RPC/non-interactive mode instead.
+- The daemon is local-first and single-process; it is not a remote multi-user service.
+
+## Examples
+
+- `examples/config.imsg.json`: placeholder `imsg` configuration.
+- `examples/config.mock.json`: no-message mock receive/send commands for smoke tests.
+- `examples/com.agentmux.daemon.plist`: LaunchAgent plist shape.
+- `examples/subagent-completion.md`: completion helper examples.

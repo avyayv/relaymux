@@ -6,7 +6,10 @@ import { parseArgv } from "./args.js";
 import { buildAgentInvocation, buildTmuxShellCommand, buildTmuxShellScript, quoteArgv } from "./command.js";
 import { collectDoctorChecks } from "./doctor.js";
 import { defaultConfigPath, loadConfig, resolveStateDir, writeDefaultConfig } from "./config.js";
+import { runDaemon } from "./daemon.js";
+import { installLaunchAgent, launchAgentPath, uninstallLaunchAgent } from "./launch-agent.js";
 import { handleNotify } from "./notify.js";
+import { webhookStatus } from "./webhook.js";
 import { expandPath, ensureDirectory, pathExists, readTextFile } from "./paths.js";
 import { latestEventsByRun, readRuns, recordRun, writePromptFile, writeScriptFile } from "./state.js";
 import { createAgentWindow, listAgentWindows, sendShellCommand, setWindowMetadata, validateSessionName } from "./tmux.js";
@@ -35,7 +38,7 @@ export async function main(argv, io = defaultIo()) {
       case "launch":
         return handleLaunch(parsed.flags, configInfo, stateDir, io);
       case "status":
-        return handleStatus(parsed.flags, configInfo.config, stateDir, io);
+        return handleStatus(parsed.flags, configInfo, stateDir, io);
       case "notify":
         await handleNotify({
           flags: parsed.flags,
@@ -44,6 +47,14 @@ export async function main(argv, io = defaultIo()) {
           stateDir,
           io,
         });
+        return 0;
+      case "daemon":
+        return runDaemon({ flags: parsed.flags, configInfo, stateDir, io });
+      case "install-launch-agent":
+        installLaunchAgent({ flags: parsed.flags, configInfo, binPath: process.argv[1], io });
+        return 0;
+      case "uninstall-launch-agent":
+        uninstallLaunchAgent({ config: configInfo.config, io });
         return 0;
       case "doctor":
         return handleDoctor(configInfo, io);
@@ -177,7 +188,8 @@ function buildLaunchShellScript(agentName, agentConfig, context) {
   return buildTmuxShellScript(invocation, context);
 }
 
-function handleStatus(flags, config, stateDir, io) {
+function handleStatus(flags, configInfo, stateDir, io) {
+  const config = configInfo.config;
   const session = flags.session || config.session;
   const windows = listAgentWindows({ session: flags.all ? undefined : session });
   const windowsByRunId = new Map(windows.map((window) => [window.runId, window]));
@@ -197,11 +209,14 @@ function handleStatus(flags, config, stateDir, io) {
   }
 
   rows.sort((a, b) => String(b.started).localeCompare(String(a.started)));
+  const daemon = daemonStatus(config, configInfo.path);
 
   if (flags.json) {
-    io.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
+    io.stdout.write(`${JSON.stringify({ daemon, runs: rows }, null, 2)}\n`);
     return 0;
   }
+
+  io.stdout.write(`Daemon: ${daemon.enabled ? "enabled" : "disabled"}; webhook ${daemon.webhook.endpoints.message}; token ${daemon.webhook.tokenFileExists ? daemon.webhook.tokenFileMode : "missing"}; LaunchAgent ${daemon.launchAgentPath}\n`);
 
   if (rows.length === 0) {
     io.stdout.write("No agentmux runs found.\n");
@@ -210,6 +225,15 @@ function handleStatus(flags, config, stateDir, io) {
 
   io.stdout.write(formatTable(rows, ["state", "target", "agent", "name", "repo", "lastEvent"]));
   return 0;
+}
+
+function daemonStatus(config, configPath) {
+  return {
+    enabled: config.daemon?.enabled !== false,
+    configPath,
+    webhook: webhookStatus(config),
+    launchAgentPath: launchAgentPath(config),
+  };
 }
 
 function statusRow(run, window, latestEvent) {
@@ -303,9 +327,12 @@ function helpText() {
 
 Usage:
   agentmux init [--force] [--config <path>]
+  agentmux daemon [--once]
+  agentmux install-launch-agent [--dry-run] [--no-load]
+  agentmux uninstall-launch-agent
   agentmux launch --repo <path> --agent <name> --prompt <text|@file> [--name <name>]
   agentmux status [--json] [--session <name>] [--all]
-  agentmux notify --run-id <id> --event <event> [--message <text>] [--exit-code <code>]
+  agentmux notify [--run-id <id>] [--reply-mode imessage|none] [--message <text>]
   agentmux doctor
 
 Launch options:
@@ -319,6 +346,13 @@ Launch options:
   --print-command            Print the tmux shell command before launching
   --hold                     Keep a shell open after the agent exits
   --attach                   Print attach command after launch
+
+Daemon/notify options:
+  --once                     Poll once, drain queued work, then exit (for smoke tests)
+  --reply-mode <mode>        For notify: imessage sends a concise chat update; none is quiet context
+  --from <name>              For notify: source/subagent name
+  --idempotency-key <key>    For notify: suppress duplicate completion webhook retries
+  --metadata-json <json>     For notify: optional metadata object
 
 Config defaults to ${defaultConfigPath()}.
 `;

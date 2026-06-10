@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { runCommand } from "./process.js";
+import { launchAgentPath } from "./launch-agent.js";
+import { webhookStatus } from "./webhook.js";
 
 export function findExecutable(command, env = process.env) {
   if (!command) {
@@ -54,6 +56,36 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
     detail: configInfo.exists ? configInfo.path : `not initialized (${configInfo.path})`,
   });
 
+  if (configInfo.exists) {
+    const stat = fs.statSync(configInfo.path);
+    const mode = stat.mode & 0o777;
+    checks.push({
+      name: "config-permissions",
+      ok: (mode & 0o022) === 0,
+      detail: `${configInfo.path} mode 0${mode.toString(8)}`,
+    });
+  }
+
+  checks.push(commandCheck("orchestrator", config.orchestrator?.command?.[0], env));
+  if (config.imessage?.receive?.backend === "command") {
+    checks.push(commandCheck("message-receive", config.imessage.receive.command?.argv?.[0], env));
+  }
+  if (config.imessage?.send?.backend === "command") {
+    checks.push(commandCheck("message-send", config.imessage.send.command?.argv?.[0], env));
+  }
+
+  const webhook = webhookStatus(config);
+  checks.push({
+    name: "webhook-token",
+    ok: !webhook.tokenFileExists || webhook.tokenFileMode === "0600",
+    detail: webhook.tokenFileExists ? `${webhook.tokenFile} mode ${webhook.tokenFileMode}` : `will be created at ${webhook.tokenFile}`,
+  });
+  checks.push({
+    name: "launch-agent",
+    ok: true,
+    detail: launchAgentPath(config),
+  });
+
   for (const [name, agent] of Object.entries(config.agents ?? {})) {
     const command = Array.isArray(agent.command) ? agent.command[0] : "";
     const executable = findExecutable(command, env);
@@ -65,4 +97,13 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
   }
 
   return checks;
+}
+
+function commandCheck(name, command, env) {
+  const executable = findExecutable(command, env);
+  return {
+    name,
+    ok: Boolean(executable),
+    detail: executable || `${command || "missing command"} not found on PATH`,
+  };
 }

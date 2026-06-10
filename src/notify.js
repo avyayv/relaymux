@@ -1,11 +1,18 @@
+import fs from "node:fs";
+
 import { recordEvent } from "./state.js";
 import { renderTemplate } from "./command.js";
 import { runCommand } from "./process.js";
+import { formatHostForUrl, webhookConfig } from "./webhook.js";
+import { expandPath } from "./paths.js";
 
 export async function handleNotify({ flags, positionals, config, stateDir, io }) {
   const runId = flags.runId || process.env.AGENTMUX_RUN_ID;
-  if (!runId) {
-    throw new Error("Missing --run-id, and AGENTMUX_RUN_ID is not set");
+  const message = flags.message || flags.text || positionals.join(" ");
+  const replyMode = flags.replyMode;
+
+  if (!runId && !replyMode) {
+    throw new Error("Missing --run-id (for local event recording) or --reply-mode (for daemon completion webhook)");
   }
 
   const event = {
@@ -13,14 +20,30 @@ export async function handleNotify({ flags, positionals, config, stateDir, io })
     runId,
     event: flags.event || "message",
     exitCode: flags.exitCode === undefined ? undefined : Number(flags.exitCode),
-    message: flags.message || positionals.join(" "),
+    message,
     agent: flags.agent,
     name: flags.name,
     repo: flags.repo,
+    from: flags.from || flags.source,
+    replyMode,
+    idempotencyKey: flags.idempotencyKey,
   };
 
-  recordEvent(stateDir, event);
-  await dispatchNotifiers(config, event, io);
+  if (runId) {
+    recordEvent(stateDir, event);
+    await dispatchNotifiers(config, event, io);
+  }
+
+  if (replyMode && flags.webhook !== false) {
+    if (config.daemon?.enabled === false) {
+      io.stdout.write(`${JSON.stringify({ ok: true, webhook: false, event })}\n`);
+    } else {
+      const response = await postCompletionWebhook(config, flags, event);
+      io.stdout.write(`${JSON.stringify(response)}\n`);
+    }
+    return;
+  }
+
   io.stdout.write(`${JSON.stringify(event)}\n`);
 }
 
@@ -60,6 +83,63 @@ export async function dispatchNotifiers(config, event, io) {
       io.stderr.write(`agentmux notify: webhook failed: ${error.message}\n`);
     }
   }
+}
+
+async function postCompletionWebhook(config, flags, event) {
+  if (!event.message?.trim()) {
+    throw new Error("Missing --message/--text for daemon completion webhook");
+  }
+  if (!["imessage", "none"].includes(event.replyMode)) {
+    throw new Error("--reply-mode must be imessage or none");
+  }
+
+  const resolved = webhookConfig(config);
+  const host = flags.host || resolved.host;
+  const port = Number(flags.port || resolved.port);
+  const tokenFile = expandPath(flags.tokenFile || resolved.tokenFile);
+  const token = fs.readFileSync(tokenFile, "utf8").trim();
+  if (!token) throw new Error(`token file is empty: ${tokenFile}`);
+
+  let metadata = {};
+  if (flags.metadataJson) {
+    metadata = JSON.parse(flags.metadataJson);
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+      throw new Error("--metadata-json must be a JSON object");
+    }
+  }
+  if (event.runId) metadata.runId = event.runId;
+  if (event.event) metadata.event = event.event;
+  if (event.agent) metadata.agent = event.agent;
+  if (event.name) metadata.name = event.name;
+  if (event.repo) metadata.repo = event.repo;
+
+  const body = JSON.stringify({
+    from: event.from || event.agent || event.name || "local-subagent",
+    text: event.message,
+    replyMode: event.replyMode,
+    idempotencyKey: event.idempotencyKey,
+    metadata,
+  });
+  const url = `http://${formatHostForUrl(host)}:${port}/message`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body,
+  });
+  const text = await response.text();
+  let payload;
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = { raw: text };
+  }
+  if (!response.ok) {
+    throw new Error(`completion webhook returned ${response.status}: ${text}`);
+  }
+  return payload;
 }
 
 function eventTemplateContext(event) {

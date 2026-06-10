@@ -1,7 +1,7 @@
 {
   "name": "agentmux",
   "version": "0.1.0",
-  "description": "Run local coding agents in organized tmux sessions.",
+  "description": "Talk to a local Pi orchestrator over iMessage/SMS and delegate coding agents into tmux tabs.",
   "type": "module",
   "bin": {
     "agentmux": "./bin/agentmux.js"
@@ -9,6 +9,7 @@
   "files": [
     "bin",
     "src",
+    "examples",
     "README.md",
     "LICENSE"
   ],
@@ -19,6 +20,7 @@
   },
   "keywords": [
     "agents",
+    "imessage",
     "tmux",
     "orchestration",
     "cli"

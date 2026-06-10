@@ -7,6 +7,7 @@ const BOOLEAN_FLAGS = new Set([
   "help",
   "hold",
   "json",
+  "once",
   "print-command",
   "version",
 ]);

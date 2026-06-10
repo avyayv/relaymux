@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "session": "agentmux-mock",
+  "stateDir": "/tmp/agentmux-mock/state",
+  "imessage": {
+    "chatId": "mock-chat",
+    "recipient": "+15555550123",
+    "pollMs": 1000,
+    "syncLimit": 5,
+    "maxReplyChars": 1400,
+    "receive": {
+      "backend": "command",
+      "command": {
+        "argv": ["sh", "-lc", "printf '%s\\n' '[]'"],
+        "cwd": "/tmp",
+        "timeoutMs": 5000
+      }
+    },
+    "send": {
+      "backend": "command",
+      "command": {
+        "argv": ["sh", "-lc", "printf '%s\\n' \"$1\" >> /tmp/agentmux-mock/outbox.txt", "sh", "{text}"],
+        "cwd": "/tmp",
+        "timeoutMs": 5000
+      }
+    }
+  },
+  "daemon": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 47762,
+    "tokenFile": "/tmp/agentmux-mock/webhook-token",
+    "maxBodyBytes": 65536,
+    "launchAgentLabel": "com.agentmux.mock",
+    "logDir": "/tmp/agentmux-mock/logs"
+  },
+  "orchestrator": {
+    "cwd": "/tmp",
+    "command": ["sh", "-lc", "printf 'mock orchestrator reply\\n'"],
+    "promptMode": "none",
+    "timeoutMs": 5000
+  },
+  "agents": {
+    "custom": {
+      "command": ["sh", "-lc", "printf 'mock subagent running: %s\\n' \"$AGENTMUX_PROMPT\""],
+      "promptMode": "env"
+    }
+  }
+}

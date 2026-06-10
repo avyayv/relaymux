@@ -5,11 +5,58 @@ import path from "node:path";
 import { expandPath } from "./paths.js";
 
 export function defaultConfig() {
+  const stateDir = "~/.local/state/agentmux";
+  const tokenFile = `${stateDir}/webhook-token`;
+
   return {
     version: 1,
     session: "agents",
-    stateDir: "~/.local/state/agentmux",
+    stateDir,
     holdOnExit: false,
+    imessage: {
+      chatId: "CHAT_ID_OR_PHONE",
+      recipient: "+15555550123",
+      pollMs: 3000,
+      syncLimit: 5,
+      maxReplyChars: 1400,
+      receive: {
+        backend: "command",
+        command: {
+          description: "Command must print recent messages as JSON/JSONL. This imsg example is a placeholder.",
+          argv: ["imsg", "history", "--chat-id", "{chatId}", "--limit", "{limit}", "--json"],
+          cwd: "~",
+          timeoutMs: 30000,
+        },
+      },
+      send: {
+        backend: "command",
+        command: {
+          description: "Command sends one text chunk. This imsg example is a placeholder.",
+          argv: ["imsg", "send", "--chat-id", "{chatId}", "--text", "{text}", "--json"],
+          cwd: "~",
+          timeoutMs: 60000,
+        },
+      },
+    },
+    daemon: {
+      enabled: true,
+      host: "127.0.0.1",
+      port: 47761,
+      tokenFile,
+      maxBodyBytes: 65536,
+      launchAgentLabel: "com.agentmux.daemon",
+      logDir: `${stateDir}/logs`,
+    },
+    orchestrator: {
+      description: "Pi orchestrator command. Use a non-interactive Pi invocation if your pi binary supports one.",
+      cwd: "~",
+      command: ["pi", "{prompt}"],
+      promptMode: "arg",
+      timeoutMs: 0,
+      maxBufferBytes: 10 * 1024 * 1024,
+      systemPromptFile: "",
+      extraSystemPrompt: "",
+    },
     agents: {
       pi: {
         description: "Pi CLI template. Edit this command to match your local install.",
@@ -71,7 +118,7 @@ export function writeDefaultConfig(configPath, { force = false } = {}) {
     throw new Error(`Config already exists at ${resolvedPath}. Use --force to overwrite.`);
   }
   fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
-  fs.writeFileSync(resolvedPath, `${JSON.stringify(defaultConfig(), null, 2)}\n`);
+  fs.writeFileSync(resolvedPath, `${JSON.stringify(defaultConfig(), null, 2)}\n`, { mode: 0o600 });
   return resolvedPath;
 }
 
