@@ -5,9 +5,16 @@ import { createCompletionWebhookServer } from "./webhook.js";
 import { buildIncomingOrchestratorPrompt, buildWebhookOrchestratorPrompt, runOrchestrator } from "./orchestrator.js";
 import { formatIncomingForPrompt, isIncomingUserMessage, receiveMessages, sendMessage } from "./message-io.js";
 import { ensureDirectory } from "./paths.js";
+import { validateSessionName } from "./tmux.js";
 
 export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() }) {
-  const config = configInfo.config;
+  const sessionOverride = flags.session || io.env?.RELAYMUX_SESSION;
+  if (sessionOverride) {
+    validateSessionName(String(sessionOverride));
+  }
+  const config = sessionOverride
+    ? { ...configInfo.config, session: String(sessionOverride) }
+    : configInfo.config;
   ensureDirectory(stateDir);
   const stateFile = path.join(stateDir, "daemon-state.json");
   const state = readDaemonState(stateFile);
@@ -251,6 +258,7 @@ function oneLine(text) {
 
 function defaultIo() {
   return {
+    env: process.env,
     stdout: process.stdout,
     stderr: process.stderr,
   };

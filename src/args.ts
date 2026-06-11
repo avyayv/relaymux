@@ -5,13 +5,16 @@ const BOOLEAN_FLAGS = new Set([
   "dry-run",
   "force",
   "help",
+  "history",
   "hold",
   "imsg",
   "install-launch-agent",
   "json",
+  "keep-launch-agent",
   "launch-agent",
   "once",
   "print-command",
+  "restart",
   "version",
 ]);
 

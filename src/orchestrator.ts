@@ -78,6 +78,7 @@ export async function runOrchestrator(config, { prompt, stateDir, configPath, re
       ...invocation.env,
       RELAYMUX_CONFIG: configPath,
       RELAYMUX_ORCHESTRATOR: "1",
+      RELAYMUX_SESSION: config.session || "agents",
     },
     input,
     timeoutMs: Number(orchestrator.timeoutMs || 0),

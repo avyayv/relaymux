@@ -13,6 +13,9 @@ export function defaultConfig() {
     session: "agents",
     stateDir,
     holdOnExit: false,
+    tmux: {
+      extraWindows: [],
+    },
     imessage: {
       chatId: "CHAT_ID_OR_PHONE",
       recipient: "+15555550123",

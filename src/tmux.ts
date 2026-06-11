@@ -29,9 +29,23 @@ export function hasSession(session) {
 export function createAgentWindow({ session, name, cwd }) {
   validateSessionName(session);
 
-  const args = hasSession(session)
-    ? ["new-window", "-d", "-P", "-F", "#{session_name}:#{window_index}.#{pane_index}", "-t", `${session}:`, "-n", name, "-c", cwd]
-    : ["new-session", "-d", "-P", "-F", "#{session_name}:#{window_index}.#{pane_index}", "-s", session, "-n", name, "-c", cwd];
+  return createWindow({ session, name, cwd });
+}
+
+export function createCommandWindow({ session, name, cwd, shellCommand }) {
+  validateSessionName(session);
+
+  return createWindow({ session, name, cwd, shellCommand });
+}
+
+export function createCommandPane({ windowTarget, cwd, shellCommand, split = "horizontal" }) {
+  const args = ["split-window", "-d", "-P", "-F", "#{session_name}:#{window_index}.#{pane_index}"];
+  if (split === "vertical") {
+    args.push("-v");
+  } else {
+    args.push("-h");
+  }
+  args.push("-t", windowTarget, "-c", cwd, shellCommand);
 
   const result = runCommand("tmux", args);
   const target = result.stdout.trim();
@@ -39,6 +53,33 @@ export function createAgentWindow({ session, name, cwd }) {
     target,
     windowTarget: target.replace(/\.\d+$/, ""),
   };
+}
+
+function createWindow({ session, name, cwd, shellCommand = undefined }) {
+  const args = hasSession(session)
+    ? ["new-window", "-d", "-P", "-F", "#{session_name}:#{window_index}.#{pane_index}", "-t", `${session}:`, "-n", name, "-c", cwd]
+    : ["new-session", "-d", "-P", "-F", "#{session_name}:#{window_index}.#{pane_index}", "-s", session, "-n", name, "-c", cwd];
+
+  if (shellCommand !== undefined) {
+    args.push(shellCommand);
+  }
+
+  const result = runCommand("tmux", args);
+  const target = result.stdout.trim();
+  return {
+    target,
+    windowTarget: target.replace(/\.\d+$/, ""),
+  };
+}
+
+export function killWindowByName({ session, name }) {
+  validateSessionName(session);
+  const result = runCommand("tmux", ["kill-window", "-t", `${session}:${name}`], { allowFailure: true });
+  return result.status === 0;
+}
+
+export function selectLayout(target, layout = "tiled") {
+  runCommand("tmux", ["select-layout", "-t", target, layout], { allowFailure: true });
 }
 
 export function sendShellCommand(target, shellCommand) {

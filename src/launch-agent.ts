@@ -79,6 +79,21 @@ export function installLaunchAgent({ flags, configInfo, binPath, io }) {
   return plistPath;
 }
 
+export function stopLaunchAgent({ config, io }) {
+  if (process.platform !== "darwin") {
+    return false;
+  }
+
+  const label = launchAgentLabel(config);
+  const target = `gui/${process.getuid?.() || 501}/${label}`;
+  const result = runCommand("launchctl", ["bootout", target], { allowFailure: true });
+  if (result.status === 0) {
+    io.stdout.write(`Stopped LaunchAgent ${label}\n`);
+    return true;
+  }
+  return false;
+}
+
 export function uninstallLaunchAgent({ config, io }) {
   const plistPath = launchAgentPath(config);
   if (fs.existsSync(plistPath)) {

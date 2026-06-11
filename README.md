@@ -52,6 +52,31 @@ If you skipped the LaunchAgent with `relaymux setup --no-launch-agent`, run the 
 relaymux daemon
 ```
 
+Or run it inside a tmux session. The tmux session name is required and is also used as the runtime default for delegated subagents:
+
+```bash
+relaymux start-tmux --session my-agents
+```
+
+This creates the tmux session if needed, starts the daemon in a `relaymux-daemon` window, and stops the configured macOS LaunchAgent first if one is loaded. Use `--keep-launch-agent` if you do not want that.
+
+You can also ask `start-tmux` to start additional long-running windows by adding `tmux.extraWindows` to the config:
+
+```json
+{
+  "tmux": {
+    "extraWindows": [
+      {
+        "name": "sidecar",
+        "mode": "pane",
+        "cwd": "~",
+        "command": ["sh", "-lc", "echo sidecar && sleep 3600"]
+      }
+    ]
+  }
+}
+```
+
 Install it as a macOS LaunchAgent:
 
 ```bash
@@ -74,16 +99,22 @@ relaymux launch \
   --prompt "Fix the API bug, run tests, and report back with relaymux notify."
 ```
 
-See running tabs:
+See running tmux windows:
 
 ```bash
 relaymux status
 ```
 
-Attach to the tmux session:
+Include old run records whose tmux windows are gone:
 
 ```bash
-tmux attach -t agents
+relaymux status --history
+```
+
+Attach to the tmux session you chose:
+
+```bash
+tmux attach -t my-agents
 ```
 
 ## Report back from a subagent

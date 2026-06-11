@@ -93,6 +93,7 @@ export function buildTmuxShellScript(invocation, context) {
     RELAYMUX_PROMPT_FILE: context.promptFile,
     RELAYMUX_REPO: context.repo,
     RELAYMUX_RUN_ID: context.runId,
+    RELAYMUX_SESSION: context.session || "",
     RELAYMUX_WORKDIR: context.workdir,
   };
 

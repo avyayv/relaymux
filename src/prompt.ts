@@ -32,6 +32,6 @@ export function buildRuntimePromptContext({ configPath, session, tokenFile, webh
 - tmux session for subagents: ${session}
 - local completion webhook: ${webhookUrl}
 - webhook token file for helpers: ${tokenFile}
-- default launch shape: relaymux launch --repo <path> --agent <name> --name <short-name> --prompt-file <file>
+- default launch shape: relaymux launch --session ${session} --repo <path> --agent <name> --name <short-name> --prompt-file <file>
 - completion helper shape: relaymux notify --from <name> --reply-mode imessage --idempotency-key <stable-key> --message <summary>`;
 }
