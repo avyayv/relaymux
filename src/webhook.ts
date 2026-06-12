@@ -33,6 +33,7 @@ export function webhookStatus(config) {
       health: `http://${hostForUrl}:${resolved.port}/health`,
       message: `http://${hostForUrl}:${resolved.port}/message`,
       agentMessage: `http://${hostForUrl}:${resolved.port}/agent-message`,
+      request: `http://${hostForUrl}:${resolved.port}/request`,
     },
   };
 }
@@ -86,6 +87,33 @@ export function normalizeCompletionBody(body, requestId, receivedAt = new Date()
   };
 }
 
+export function normalizeTerminalRequestBody(body, requestId, receivedAt = new Date().toISOString()) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw httpError(400, "JSON object body is required");
+
+  const rawText = body.text ?? body.message;
+  if (typeof rawText !== "string" || !rawText.trim()) throw httpError(400, "text or message string is required");
+
+  const metadata = body.metadata === undefined ? {} : body.metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) throw httpError(400, "metadata must be an object when provided");
+
+  const replyMode = body.replyMode === undefined ? "none" : String(body.replyMode);
+  if (!["imessage", "none"].includes(replyMode)) throw httpError(400, "replyMode must be imessage or none");
+
+  const rawSource = body.from ?? body.source ?? "terminal";
+  const source = String(rawSource || "terminal").slice(0, 200);
+
+  return {
+    type: "request",
+    requestId,
+    source,
+    text: rawText,
+    metadata,
+    replyMode,
+    wait: body.wait !== false,
+    receivedAt,
+  };
+}
+
 export function rememberWebhookIdempotencyKey(state, key, { max = 1000 } = {}) {
   if (!key) return { duplicate: false };
   const seen = new Set((state.seenWebhookIdempotencyKeys || []).map(String));
@@ -128,12 +156,14 @@ export async function createCompletionWebhookServer({ config, state, saveState, 
         return;
       }
 
-      if ((url.pathname === "/message" || url.pathname === "/agent-message") && req.method !== "POST") {
+      const isCompletionEndpoint = url.pathname === "/message" || url.pathname === "/agent-message";
+      const isRequestEndpoint = url.pathname === "/request";
+      if ((isCompletionEndpoint || isRequestEndpoint) && req.method !== "POST") {
         writeJson(res, 405, { ok: false, error: "method not allowed" });
         return;
       }
 
-      if (req.method === "POST" && (url.pathname === "/message" || url.pathname === "/agent-message")) {
+      if (req.method === "POST" && (isCompletionEndpoint || isRequestEndpoint)) {
         const suppliedToken = parseBearerToken(req.headers.authorization);
         if (!tokenMatches(token, suppliedToken)) {
           writeJson(res, 401, { ok: false, error: "unauthorized" });
@@ -141,6 +171,22 @@ export async function createCompletionWebhookServer({ config, state, saveState, 
         }
 
         const body = await readJsonRequestBody(req, resolved.maxBodyBytes);
+        if (isRequestEndpoint) {
+          const requestId = makeRequestId("term");
+          const job: any = normalizeTerminalRequestBody(body, requestId);
+          if (job.wait) {
+            const deferred = createDeferred();
+            job.deferred = deferred;
+            enqueue(job);
+            const result: any = await deferred.promise;
+            writeJson(res, result.ok ? 200 : 500, { ...result, requestId, replyMode: job.replyMode });
+          } else {
+            enqueue(job);
+            writeJson(res, 202, { ok: true, queued: true, requestId, replyMode: job.replyMode });
+          }
+          return;
+        }
+
         const requestId = makeRequestId("wh");
         const job = normalizeCompletionBody(body, requestId);
         if (job.idempotencyKey) {
@@ -202,6 +248,14 @@ export function isLocalWebhookHost(host) {
 
 function isValidWebhookPort(port) {
   return Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+
+function createDeferred() {
+  let resolve;
+  const promise = new Promise((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
 }
 
 function writeJson(res, statusCode, payload) {

@@ -48,6 +48,8 @@ export function defaultConfig() {
       tokenFile,
       maxBodyBytes: 65536,
       launchAgentLabel: "com.relaymux.daemon",
+      launchMode: "tmux",
+      supervisorPollMs: 15000,
       logDir: `${stateDir}/logs`,
     },
     orchestrator: {

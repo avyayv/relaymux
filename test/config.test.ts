@@ -17,6 +17,7 @@ test("writeDefaultConfig creates a loadable config", () => {
   assert.equal(config.session, "agents");
   assert.equal(config.imessage.receive.backend, "command");
   assert.equal(config.daemon.host, "127.0.0.1");
+  assert.equal(config.daemon.launchMode, "tmux");
   assert.ok(config.orchestrator.command);
   assert.ok(config.agents.codex);
 });

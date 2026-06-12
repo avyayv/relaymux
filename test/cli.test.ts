@@ -48,3 +48,20 @@ test("start-tmux dry-run uses the explicit session", async () => {
   assert.match(harness.stdout, /RELAYMUX_SESSION=smoke/);
   assert.match(harness.stdout, /daemon --session smoke/);
 });
+
+test("supervise-tmux dry-run uses the configured session", async () => {
+  const harness = makeIo();
+  const code = await main([
+    "--config",
+    tempConfigPath("supervise-dry-run"),
+    "supervise-tmux",
+    "--session",
+    "boot-agents",
+    "--dry-run",
+  ], harness.io);
+
+  assert.equal(code, 0);
+  assert.match(harness.stdout, /# session: boot-agents/);
+  assert.match(harness.stdout, /RELAYMUX_SESSION=boot-agents/);
+  assert.match(harness.stdout, /daemon --session boot-agents/);
+});

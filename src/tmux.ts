@@ -1,5 +1,6 @@
 import { runCommand } from "./process.js";
 
+const WINDOW_FIELD_SEPARATOR = "<|relaymux|>";
 const WINDOW_FORMAT = [
   "#{session_name}",
   "#{window_index}",
@@ -13,7 +14,7 @@ const WINDOW_FORMAT = [
   "#{@relaymux_repo}",
   "#{@relaymux_name}",
   "#{@relaymux_started}",
-].join("\t");
+].join(WINDOW_FIELD_SEPARATOR);
 
 export function validateSessionName(session) {
   if (!/^[A-Za-z0-9_.-]+$/.test(session)) {
@@ -123,7 +124,7 @@ function parseWindowLine(line) {
     repo,
     name,
     started,
-  ] = line.split("\t");
+  ] = line.split(WINDOW_FIELD_SEPARATOR);
 
   return {
     session,

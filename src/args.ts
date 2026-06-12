@@ -16,6 +16,7 @@ const BOOLEAN_FLAGS = new Set([
   "print-command",
   "restart",
   "version",
+  "wait",
 ]);
 
 export function parseArgv(argv) {

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -9,7 +10,7 @@ import { defaultConfigPath, loadConfig, resolveStateDir, writeConfig, writeDefau
 import { runDaemon } from "./daemon.js";
 import { installLaunchAgent, launchAgentPath, stopLaunchAgent, uninstallLaunchAgent } from "./launch-agent.js";
 import { handleNotify } from "./notify.js";
-import { webhookStatus } from "./webhook.js";
+import { webhookConfig, webhookStatus } from "./webhook.js";
 import { expandPath, ensureDirectory, pathExists, readTextFile } from "./paths.js";
 import { buildImsgConfig, initOptionsFromFlags, resolveImsgChatId } from "./setup-imsg.js";
 import { latestEventsByRun, readRuns, recordRun, writePromptFile, writeScriptFile } from "./state.js";
@@ -53,10 +54,15 @@ export async function main(argv, io = defaultIo()) {
           io,
         });
         return 0;
+      case "ask":
+      case "request":
+        return handleAsk(parsed.flags, parsed.positionals, configInfo, io);
       case "daemon":
         return runDaemon({ flags: parsed.flags, configInfo, stateDir, io });
       case "start-tmux":
         return handleStartTmux(parsed.flags, configInfo, stateDir, io);
+      case "supervise-tmux":
+        return handleSuperviseTmux(parsed.flags, configInfo, stateDir, io);
       case "install-launch-agent":
         installLaunchAgent({ flags: parsed.flags, configInfo, binPath: process.argv[1], io });
         return 0;
@@ -246,6 +252,36 @@ function handleLaunch(flags, configInfo, stateDir, io) {
   return 0;
 }
 
+async function handleAsk(flags, positionals, configInfo, io) {
+  const text = resolveRequestText(flags, positionals);
+  const replyMode = flags.replyMode || "none";
+  if (!["imessage", "none"].includes(replyMode)) {
+    throw new Error("--reply-mode must be imessage or none");
+  }
+
+  const metadata = flags.metadataJson ? parseMetadataJson(flags.metadataJson) : {};
+  const wait = flags.wait !== false;
+  const result = await postDaemonRequest(configInfo.config, {
+    text,
+    source: flags.from || "terminal",
+    metadata,
+    replyMode,
+    wait,
+  }, Number(flags.timeoutMs || 0));
+
+  if (!wait) {
+    io.stdout.write(`Queued terminal request ${result.requestId}\n`);
+    return 0;
+  }
+
+  if (!result.ok) {
+    throw new Error(result.error || "terminal request failed");
+  }
+
+  io.stdout.write(`${String(result.reply || "Done.").trim()}\n`);
+  return 0;
+}
+
 function handleStartTmux(flags, configInfo, stateDir, io) {
   if (!flags.session) {
     throw new Error("Missing --session <name> for start-tmux");
@@ -379,6 +415,91 @@ function handleStartTmux(flags, configInfo, stateDir, io) {
     io.stdout.write(`Attach command: tmux attach -t ${session}\n`);
   }
   return 0;
+}
+
+async function handleSuperviseTmux(flags, configInfo, stateDir, io) {
+  const config = configInfo.config;
+  const session = String(flags.session || io.env.RELAYMUX_SESSION || config.session || "agents");
+  validateSessionName(session);
+  const windowName = sanitizeName(flags.windowName || "relaymux-daemon");
+  const configuredIntervalMs = Number(flags.intervalMs || config.daemon?.supervisorPollMs || 15000);
+  const intervalMs = Number.isFinite(configuredIntervalMs) ? Math.max(1000, configuredIntervalMs) : 15000;
+  let checking = false;
+
+  const log = (...args) => io.stdout.write(`[${new Date().toISOString()}] ${args.join(" ")}\n`);
+  const warn = (...args) => io.stderr.write(`[${new Date().toISOString()}] ${args.join(" ")}\n`);
+  const startFlags = {
+    ...flags,
+    session,
+    windowName,
+    attach: false,
+    dryRun: false,
+    keepLaunchAgent: true,
+    stopLaunchAgent: false,
+    restart: flags.restart !== false,
+  };
+
+  function ensureStarted() {
+    if (checking) return;
+    checking = true;
+    try {
+      const reason = tmuxStackRepairReason(config, session, windowName);
+      if (!reason) return;
+
+      log(`starting relaymux tmux stack: ${reason}`);
+      handleStartTmux(startFlags, configInfo, stateDir, io);
+    } catch (error) {
+      warn("tmux supervisor check failed:", error?.message || String(error));
+    } finally {
+      checking = false;
+    }
+  }
+
+  if (flags.dryRun) {
+    return handleStartTmux({ ...startFlags, dryRun: true }, configInfo, stateDir, io);
+  }
+
+  log(`supervising relaymux tmux session ${session} window ${windowName} every ${intervalMs}ms`);
+  ensureStarted();
+  if (flags.once) return 0;
+
+  const interval = setInterval(ensureStarted, intervalMs);
+  await new Promise<void>((resolve) => {
+    const shutdown = (signal) => {
+      log(`stopping tmux supervisor (${signal})`);
+      clearInterval(interval);
+      resolve();
+    };
+    process.once("SIGTERM", () => shutdown("SIGTERM"));
+    process.once("SIGINT", () => shutdown("SIGINT"));
+  });
+  return 0;
+}
+
+function tmuxStackRepairReason(config, session, windowName) {
+  const windows = listAgentWindows({ session });
+  const daemonWindow = windows.find((window) => window.agent === "daemon" && (window.name === windowName || window.windowName === windowName));
+  if (!daemonWindow) {
+    return `daemon window ${session}:${windowName} is missing`;
+  }
+
+  const extraWindows = Array.isArray(config.tmux?.extraWindows) ? config.tmux.extraWindows : [];
+  const paneExtras = extraWindows.filter((extraWindow) => extraWindow.mode === "pane").length;
+  const expectedPanes = 1 + paneExtras;
+  if (paneExtras > 0 && Number(daemonWindow.panes || 0) < expectedPanes) {
+    return `daemon window has ${daemonWindow.panes || 0}/${expectedPanes} expected pane(s)`;
+  }
+
+  for (const [index, extraWindow] of extraWindows.entries()) {
+    if (extraWindow.mode === "pane") continue;
+    const name = sanitizeName(extraWindow.name || `extra-${index + 1}`);
+    const exists = windows.some((window) => window.agent === "extra" && (window.name === name || window.windowName === name));
+    if (!exists) {
+      return `extra window ${session}:${name} is missing`;
+    }
+  }
+
+  return "";
 }
 
 function resolveExtraTmuxWindows(config, context) {
@@ -534,6 +655,76 @@ function resolvePrompt(flags) {
   return flags.prompt;
 }
 
+function resolveRequestText(flags, positionals) {
+  if (flags.prompt !== undefined || flags.promptFile) {
+    return resolvePrompt(flags);
+  }
+  if (flags.message !== undefined) {
+    return String(flags.message);
+  }
+  if (positionals.length > 0) {
+    return positionals.join(" ");
+  }
+  throw new Error("Missing request text. Use `relaymux ask <text>` or --message <text>.");
+}
+
+function parseMetadataJson(raw) {
+  try {
+    const parsed = JSON.parse(String(raw));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("metadata must be a JSON object");
+    }
+    return parsed;
+  } catch (error) {
+    throw new Error(`Invalid --metadata-json: ${error.message}`);
+  }
+}
+
+async function postDaemonRequest(config, body, timeoutMs): Promise<any> {
+  const resolved = webhookConfig(config);
+  const token = fs.readFileSync(resolved.tokenFile, "utf8").trim();
+  if (!token) throw new Error(`Webhook token file is empty: ${resolved.tokenFile}`);
+
+  const payload = Buffer.from(JSON.stringify(body));
+  const hostname = String(resolved.host).replace(/^\[(.*)\]$/, "$1");
+  return new Promise<any>((resolve, reject) => {
+    const req = http.request({
+      hostname,
+      port: resolved.port,
+      path: "/request",
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "content-length": String(payload.length),
+      },
+    }, (res) => {
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => {
+        const raw = Buffer.concat(chunks).toString("utf8");
+        let parsed;
+        try {
+          parsed = raw ? JSON.parse(raw) : {};
+        } catch {
+          reject(new Error(`daemon returned non-JSON response (${res.statusCode}): ${raw.slice(0, 500)}`));
+          return;
+        }
+        if ((res.statusCode || 500) >= 400) {
+          reject(new Error(parsed.error || `daemon request failed with HTTP ${res.statusCode}`));
+          return;
+        }
+        resolve(parsed);
+      });
+    });
+    req.on("error", (error) => reject(new Error(`Could not reach relaymux daemon at ${hostname}:${resolved.port}: ${error.message}`)));
+    if (timeoutMs > 0) {
+      req.setTimeout(timeoutMs, () => req.destroy(new Error(`Timed out after ${timeoutMs}ms waiting for relaymux daemon`)));
+    }
+    req.end(payload);
+  });
+}
+
 function sanitizeName(value) {
   return String(value)
     .trim()
@@ -581,9 +772,11 @@ Usage:
   relaymux init --imsg [--chat-id <id>] [--install-launch-agent]
   relaymux daemon [--once]
   relaymux start-tmux --session <name>
+  relaymux supervise-tmux [--session <name>]
   relaymux install-launch-agent [--dry-run] [--no-load]
   relaymux uninstall-launch-agent
   relaymux launch --repo <path> --agent <name> --prompt <text|@file> [--name <name>]
+  relaymux ask <text> [--no-wait] [--reply-mode imessage|none]
   relaymux status [--json] [--session <name>] [--all]
   relaymux notify [--run-id <id>] [--reply-mode imessage|none] [--message <text>]
   relaymux doctor
@@ -616,10 +809,17 @@ Tmux daemon options:
   --hold                     Keep a shell open if the daemon exits
   --attach                   Print attach command after start
 
-Daemon/notify options:
+Supervisor options:
+  --interval-ms <ms>         How often supervise-tmux checks the tmux stack
+  --once                     Check/start once, then exit
+
+Daemon/request/notify options:
   --once                     Poll once, drain queued work, then exit (for smoke tests)
   --session <name>           Runtime session override for daemon-launched subagents
-  --reply-mode <mode>        For notify: imessage sends a concise chat update; none is quiet context
+  --message <text>           Request/notify message text
+  --no-wait                  For ask/request: enqueue and return immediately
+  --timeout-ms <ms>          For ask/request: client-side wait timeout
+  --reply-mode <mode>        imessage sends a concise chat update; none is quiet/no text
   --from <name>              For notify: source/subagent name
   --idempotency-key <key>    For notify: suppress duplicate completion webhook retries
   --metadata-json <json>     For notify: optional metadata object

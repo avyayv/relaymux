@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { expandPath, ensureDirectory } from "./paths.js";
 import { runCommand } from "./process.js";
+import { validateSessionName } from "./tmux.js";
 
 export function launchAgentPath(config) {
   const label = launchAgentLabel(config);
@@ -14,8 +15,9 @@ export function launchAgentLabel(config) {
   return config.daemon?.launchAgentLabel || "com.relaymux.daemon";
 }
 
-export function renderLaunchAgentPlist({ label, programArguments, workingDirectory, standardOutPath, standardErrorPath }) {
+export function renderLaunchAgentPlist({ label, programArguments, workingDirectory, standardOutPath, standardErrorPath, environment = {}, keepAlive = true }) {
   const args = programArguments.map((arg) => `    <string>${xmlEscape(arg)}</string>`).join("\n");
+  const env = renderEnvironment(environment);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -27,11 +29,11 @@ export function renderLaunchAgentPlist({ label, programArguments, workingDirecto
 ${args}
   </array>
   <key>WorkingDirectory</key>
-  <string>${xmlEscape(workingDirectory)}</string>
+  <string>${xmlEscape(workingDirectory)}</string>${env}
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
-  <true/>
+  ${keepAlive ? "<true/>" : "<false/>"}
   <key>StandardOutPath</key>
   <string>${xmlEscape(standardOutPath)}</string>
   <key>StandardErrorPath</key>
@@ -51,13 +53,24 @@ export function installLaunchAgent({ flags, configInfo, binPath, io }) {
   const plistPath = launchAgentPath(config);
   const logDir = expandPath(config.daemon?.logDir || "~/.local/state/relaymux/logs");
   const workingDirectory = expandPath(config.orchestrator?.cwd || "~");
-  const programArguments = [process.execPath, binPath, "--config", configInfo.path, "daemon"];
+  const launchMode = flags.mode || config.daemon?.launchMode || "tmux";
+  const session = flags.session || config.session || "agents";
+  const programArguments = launchMode === "direct"
+    ? [process.execPath, binPath, "--config", configInfo.path, "daemon"]
+    : launchMode === "tmux"
+      ? buildTmuxSupervisorArgs({ binPath, configPath: configInfo.path, session })
+      : null;
+  if (!programArguments) {
+    throw new Error(`Unknown daemon.launchMode "${launchMode}". Use "tmux" or "direct".`);
+  }
+  const logPrefix = launchMode === "direct" ? "daemon" : "supervisor";
   const plist = renderLaunchAgentPlist({
     label,
     programArguments,
     workingDirectory,
-    standardOutPath: path.join(logDir, "daemon.out.log"),
-    standardErrorPath: path.join(logDir, "daemon.err.log"),
+    environment: launchAgentEnvironment(config, configInfo.path, String(session)),
+    standardOutPath: path.join(logDir, `${logPrefix}.out.log`),
+    standardErrorPath: path.join(logDir, `${logPrefix}.err.log`),
   });
 
   if (flags.dryRun) {
@@ -71,9 +84,14 @@ export function installLaunchAgent({ flags, configInfo, binPath, io }) {
   io.stdout.write(`Wrote ${plistPath}\n`);
 
   if (flags.load !== false) {
-    const result = runCommand("launchctl", ["bootstrap", `gui/${process.getuid?.() || 501}`, plistPath], { allowFailure: true });
+    const domain = `gui/${process.getuid?.() || 501}`;
+    runCommand("launchctl", ["bootout", `${domain}/${label}`], { allowFailure: true });
+    runCommand("launchctl", ["enable", `${domain}/${label}`], { allowFailure: true });
+    const result = runCommand("launchctl", ["bootstrap", domain, plistPath], { allowFailure: true });
     if (result.status !== 0) {
       io.stderr.write(`launchctl bootstrap did not complete (${result.status}); you can load manually with launchctl bootstrap gui/$(id -u) ${plistPath}\n`);
+    } else {
+      runCommand("launchctl", ["kickstart", "-k", `${domain}/${label}`], { allowFailure: true });
     }
   }
   return plistPath;
@@ -104,6 +122,45 @@ export function uninstallLaunchAgent({ config, io }) {
     io.stdout.write(`No LaunchAgent found at ${plistPath}\n`);
   }
   return plistPath;
+}
+
+function buildTmuxSupervisorArgs({ binPath, configPath, session }) {
+  validateSessionName(String(session));
+  return [process.execPath, binPath, "--config", configPath, "supervise-tmux", "--session", String(session)];
+}
+
+function launchAgentEnvironment(config, configPath, session) {
+  return {
+    PATH: defaultLaunchPath(),
+    HOME: os.homedir(),
+    TMUX_TMPDIR: "/private/tmp",
+    RELAYMUX_CONFIG: configPath,
+    RELAYMUX_SESSION: session,
+    ...(config.daemon?.environment || {}),
+  };
+}
+
+function defaultLaunchPath() {
+  const pathParts = [
+    path.join(os.homedir(), ".local", "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+  ];
+  return pathParts.join(":");
+}
+
+function renderEnvironment(environment) {
+  const entries = Object.entries(environment || {}).filter(([key, value]) => key && value !== undefined && value !== null);
+  if (!entries.length) return "";
+
+  const body = entries
+    .map(([key, value]) => `    <key>${xmlEscape(key)}</key>\n    <string>${xmlEscape(value)}</string>`)
+    .join("\n");
+  return `\n  <key>EnvironmentVariables</key>\n  <dict>\n${body}\n  </dict>`;
 }
 
 function xmlEscape(value) {

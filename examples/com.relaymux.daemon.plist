@@ -10,17 +10,32 @@
     <string>/usr/local/bin/relaymux</string>
     <string>--config</string>
     <string>/Users/YOU/.config/relaymux/config.json</string>
-    <string>daemon</string>
+    <string>supervise-tmux</string>
+    <string>--session</string>
+    <string>agents</string>
   </array>
   <key>WorkingDirectory</key>
   <string>/Users/YOU</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/YOU/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/YOU</string>
+    <key>TMUX_TMPDIR</key>
+    <string>/private/tmp</string>
+    <key>RELAYMUX_CONFIG</key>
+    <string>/Users/YOU/.config/relaymux/config.json</string>
+    <key>RELAYMUX_SESSION</key>
+    <string>agents</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/YOU/.local/state/relaymux/logs/daemon.out.log</string>
+  <string>/Users/YOU/.local/state/relaymux/logs/supervisor.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/YOU/.local/state/relaymux/logs/daemon.err.log</string>
+  <string>/Users/YOU/.local/state/relaymux/logs/supervisor.err.log</string>
 </dict>
 </plist>

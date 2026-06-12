@@ -33,6 +33,22 @@ export function buildWebhookOrchestratorPrompt({ config, configPath, job }) {
   });
 }
 
+export function buildTerminalOrchestratorPrompt({ config, configPath, job }) {
+  const metadataText = Object.keys(job.metadata || {}).length
+    ? `\nMetadata JSON:\n${JSON.stringify(job.metadata, null, 2)}`
+    : "";
+  const replyInstruction = job.replyMode === "imessage"
+    ? "Reply mode is imessage: do the requested work, then produce one concise user-visible text-message status. The daemon will also return the same text to the terminal command."
+    : "Reply mode is none: do the requested work and return one concise terminal-visible status. The daemon will not text the user.";
+
+  return buildFullPrompt({
+    config,
+    configPath,
+    title: "Terminal request",
+    body: `Source/from: ${job.source}\nRequest id: ${job.requestId}\nReceived at: ${job.receivedAt}\nReply mode: ${job.replyMode}${metadataText}\n\nMessage:\n${job.text}\n\nThis request came from a local terminal command. ${replyInstruction}`,
+  });
+}
+
 export function buildFullPrompt({ config, configPath, title, body }) {
   const daemon = config.daemon || {};
   const system = [

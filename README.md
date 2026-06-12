@@ -22,7 +22,7 @@ relaymux setup
 
 The installer builds relaymux locally and writes a shim to `~/.local/bin/relaymux`. It requires `node`, the project build tooling, and `git` when installing via curl.
 
-`relaymux setup` finds your local `imsg` and `pi` commands, prompts for the Messages chat to use, writes the config, installs the macOS LaunchAgent, and runs `relaymux doctor`.
+`relaymux setup` finds your local `imsg` and `pi` commands, prompts for the Messages chat to use, writes the config, installs a macOS LaunchAgent, and runs `relaymux doctor`. The LaunchAgent starts a small supervisor at login; the supervisor keeps the relaymux daemon inside `tmux` so it can create and manage agent windows normally.
 
 It writes:
 
@@ -77,17 +77,29 @@ You can also ask `start-tmux` to start additional long-running windows by adding
 }
 ```
 
-Install it as a macOS LaunchAgent:
+Install it as a macOS LaunchAgent. By default this supervises `start-tmux` using `config.session` and restarts the tmux daemon window if it disappears:
 
 ```bash
 relaymux install-launch-agent
 ```
+
+If you really want launchd to run the daemon directly instead of supervising tmux, set `daemon.launchMode` to `"direct"` in the config before installing.
 
 Remove it later:
 
 ```bash
 relaymux uninstall-launch-agent
 ```
+
+## Ask the orchestrator from a terminal
+
+Send the same orchestrator a local request without texting it:
+
+```bash
+relaymux ask "open a pi subagent in ~/code/my-app to fix the API bug"
+```
+
+By default this waits and prints the orchestrator reply. Use `--no-wait` to enqueue and return immediately, or `--reply-mode imessage` if you also want the final status texted back.
 
 ## Open agent tabs manually
 

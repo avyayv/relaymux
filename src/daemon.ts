@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { createCompletionWebhookServer } from "./webhook.js";
-import { buildIncomingOrchestratorPrompt, buildWebhookOrchestratorPrompt, runOrchestrator } from "./orchestrator.js";
+import { buildIncomingOrchestratorPrompt, buildTerminalOrchestratorPrompt, buildWebhookOrchestratorPrompt, runOrchestrator } from "./orchestrator.js";
 import { formatIncomingForPrompt, isIncomingUserMessage, receiveMessages, sendMessage } from "./message-io.js";
 import { ensureDirectory } from "./paths.js";
 import { validateSessionName } from "./tmux.js";
@@ -63,6 +63,17 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
     scheduleProcessQueue();
   }
 
+  function enqueueTerminalRequest(job) {
+    queue.push(job);
+    log(`queued terminal request ${job.requestId} from ${job.source}; replyMode=${job.replyMode}; wait=${job.wait ? "yes" : "no"}`);
+    scheduleProcessQueue();
+  }
+
+  function enqueueJob(job) {
+    if (job.type === "request") enqueueTerminalRequest(job);
+    else enqueueWebhook(job);
+  }
+
   async function processIncomingJob(job) {
     log(`processing incoming message(s): ${job.ids.join(",")}`);
     let marked = false;
@@ -119,6 +130,32 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
     }
   }
 
+  async function processTerminalRequestJob(job) {
+    log(`processing terminal request ${job.requestId} from ${job.source}`);
+    try {
+      const prompt = buildTerminalOrchestratorPrompt({ config, configPath: configInfo.path, job });
+      const reply = await runOrchestrator(config, { prompt, stateDir, configPath: configInfo.path, requestId: job.requestId });
+      if (job.replyMode === "imessage") {
+        await sendMessage(config, reply, io);
+        log(`sent terminal request reply for ${job.requestId}`);
+      } else {
+        log(`processed terminal request ${job.requestId}: ${oneLine(reply).slice(0, 240)}`);
+      }
+      job.deferred?.resolve({ ok: true, queued: false, reply });
+    } catch (error) {
+      const message = `relaymux orchestrator hit an error processing ${job.source}: ${error.message || String(error)}`;
+      warn(`failed processing terminal request ${job.requestId}:`, describeError(error));
+      if (job.replyMode === "imessage") {
+        try {
+          await sendMessage(config, message, io);
+        } catch (sendError) {
+          warn("also failed to send terminal request error message:", describeError(sendError));
+        }
+      }
+      job.deferred?.resolve({ ok: false, queued: false, error: message });
+    }
+  }
+
   async function processQueue() {
     if (processing) return;
     processing = true;
@@ -127,6 +164,7 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
         const job = queue.shift();
         if (job.type === "imessage") await processIncomingJob(job);
         else if (job.type === "webhook") await processWebhookJob(job);
+        else if (job.type === "request") await processTerminalRequestJob(job);
         else warn("dropping unknown job:", JSON.stringify(job));
       }
     } finally {
@@ -168,7 +206,7 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
         config,
         state,
         saveState,
-        enqueue: enqueueWebhook,
+        enqueue: enqueueJob,
         getStatus: queueStatus,
         io: { warn },
       });
