@@ -2,6 +2,10 @@
   "version": 1,
   "session": "relaymux-mock",
   "stateDir": "/tmp/relaymux-mock/state",
+  "tmux": {
+    "sessionMode": "per-worktree",
+    "sessionPrefix": "rmx"
+  },
   "imessage": {
     "chatId": "mock-chat",
     "recipient": "+15555550123",
@@ -32,6 +36,8 @@
     "tokenFile": "/tmp/relaymux-mock/webhook-token",
     "maxBodyBytes": 65536,
     "launchAgentLabel": "com.relaymux.mock",
+    "launchMode": "direct",
+    "supervisorPollMs": 15000,
     "logDir": "/tmp/relaymux-mock/logs"
   },
   "orchestrator": {

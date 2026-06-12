@@ -45,9 +45,9 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
   }
 
   checks.push({
-    name: "tmux",
+    name: "tmux-feature-tabs",
     ok: Boolean(tmuxPath),
-    detail: tmuxPath ? `${tmuxPath}${tmuxVersion ? ` (${tmuxVersion})` : ""}` : "not found on PATH",
+    detail: tmuxPath ? `${tmuxPath}${tmuxVersion ? ` (${tmuxVersion})` : ""}; used only for feature/task sessions` : "not found on PATH; feature agents need tmux",
   });
 
   checks.push({
@@ -81,9 +81,9 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
     detail: webhook.tokenFileExists ? `${webhook.tokenFile} mode ${webhook.tokenFileMode}` : `will be created at ${webhook.tokenFile}`,
   });
   checks.push({
-    name: "launch-agent",
+    name: "background-service",
     ok: true,
-    detail: launchAgentPath(config),
+    detail: `direct/background LaunchAgent outside tmux: ${launchAgentPath(config)}`,
   });
 
   for (const [name, agent] of Object.entries((config.agents ?? {}) as Record<string, any>)) {

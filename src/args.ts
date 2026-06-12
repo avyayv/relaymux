@@ -1,5 +1,6 @@
 const BOOLEAN_FLAGS = new Set([
   "all",
+  "allow-tmux-daemon",
   "attach",
   "create-worktree",
   "dry-run",
@@ -11,6 +12,7 @@ const BOOLEAN_FLAGS = new Set([
   "install-launch-agent",
   "json",
   "keep-launch-agent",
+  "keep-tmux-daemon",
   "launch-agent",
   "once",
   "print-command",

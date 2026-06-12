@@ -61,6 +61,7 @@ export function buildFullPrompt({ config, configPath, title, body }) {
   const runtime = buildRuntimePromptContext({
     configPath,
     session: config.session || "agents",
+    sessionMode: config.tmux?.sessionMode || "per-worktree",
     tokenFile: expandPath(daemon.tokenFile || "~/.local/state/relaymux/webhook-token"),
     webhookUrl,
   });
@@ -87,15 +88,19 @@ export async function runOrchestrator(config, { prompt, stateDir, configPath, re
   });
 
   const input = invocation.stdinFile ? fs.readFileSync(invocation.stdinFile, "utf8") : undefined;
+  const env: any = {
+    ...process.env,
+    ...invocation.env,
+    RELAYMUX_CONFIG: configPath,
+    RELAYMUX_ORCHESTRATOR: "1",
+  };
+  if (config.tmux?.sessionMode === "shared") {
+    env.RELAYMUX_SESSION = config.session || "agents";
+  }
+
   const result = await runCommandAsync(invocation.argv[0], invocation.argv.slice(1), {
     cwd,
-    env: {
-      ...process.env,
-      ...invocation.env,
-      RELAYMUX_CONFIG: configPath,
-      RELAYMUX_ORCHESTRATOR: "1",
-      RELAYMUX_SESSION: config.session || "agents",
-    },
+    env,
     input,
     timeoutMs: Number(orchestrator.timeoutMs || 0),
     maxBuffer: Number(orchestrator.maxBufferBytes || 10 * 1024 * 1024),

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { renderLaunchAgentPlist } from "../src/launch-agent.js";
+import { defaultConfig } from "../src/config.js";
+import { installLaunchAgent, parseLaunchCtlPrint, renderLaunchAgentPlist } from "../src/launch-agent.js";
 
 
 test("renderLaunchAgentPlist escapes XML and includes daemon args", () => {
@@ -22,7 +23,7 @@ test("renderLaunchAgentPlist escapes XML and includes daemon args", () => {
 test("renderLaunchAgentPlist can include launch environment", () => {
   const plist = renderLaunchAgentPlist({
     label: "com.example.relaymux",
-    programArguments: ["/bin/node", "/tmp/relaymux", "supervise-tmux", "--session", "agents"],
+    programArguments: ["/bin/node", "/tmp/relaymux", "daemon", "--session", "agents"],
     workingDirectory: "/tmp/work",
     standardOutPath: "/tmp/out.log",
     standardErrorPath: "/tmp/err.log",
@@ -34,6 +35,46 @@ test("renderLaunchAgentPlist can include launch environment", () => {
 
   assert.match(plist, /<key>EnvironmentVariables<\/key>/);
   assert.match(plist, /<key>PATH<\/key>/);
-  assert.match(plist, /<string>supervise-tmux<\/string>/);
+  assert.match(plist, /<string>daemon<\/string>/);
   assert.match(plist, /<key>RELAYMUX_SESSION<\/key>/);
+});
+
+test("installLaunchAgent direct dry-run does not invoke tmux or set tmux environment", () => {
+  let stdout = "";
+  const base = defaultConfig();
+  const config = {
+    ...base,
+    daemon: {
+      ...base.daemon,
+      environment: {
+        TMUX_TMPDIR: "/tmp/should-be-filtered",
+        RELAYMUX_SESSION: "should-be-filtered",
+      },
+    },
+  };
+
+  installLaunchAgent({
+    flags: { dryRun: true },
+    configInfo: { config, path: "/tmp/relaymux-config.json", exists: true },
+    binPath: "/tmp/relaymux.js",
+    io: {
+      stdout: { write: (chunk) => { stdout += String(chunk); } },
+      stderr: { write: () => {} },
+    },
+  });
+
+  assert.match(stdout, /<string>daemon<\/string>/);
+  assert.doesNotMatch(stdout, /supervise-tmux/);
+  assert.doesNotMatch(stdout, /start-tmux/);
+  assert.doesNotMatch(stdout, /<string>tmux<\/string>/);
+  assert.doesNotMatch(stdout, /TMUX/);
+  assert.doesNotMatch(stdout, /RELAYMUX_SESSION/);
+});
+
+test("parseLaunchCtlPrint extracts running status", () => {
+  const status = parseLaunchCtlPrint(`state = running\n\tpid = 1234\n\tlast exit code = 0\n`);
+
+  assert.equal(status.state, "running");
+  assert.equal(status.pid, 1234);
+  assert.equal(status.lastExitCode, "0");
 });

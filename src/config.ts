@@ -14,6 +14,8 @@ export function defaultConfig() {
     stateDir,
     holdOnExit: false,
     tmux: {
+      sessionMode: "per-worktree",
+      sessionPrefix: "rmx",
       extraWindows: [],
     },
     imessage: {
@@ -48,7 +50,7 @@ export function defaultConfig() {
       tokenFile,
       maxBodyBytes: 65536,
       launchAgentLabel: "com.relaymux.daemon",
-      launchMode: "tmux",
+      launchMode: "direct",
       supervisorPollMs: 15000,
       logDir: `${stateDir}/logs`,
     },

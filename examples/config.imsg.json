@@ -2,6 +2,10 @@
   "version": 1,
   "session": "agents",
   "stateDir": "~/.local/state/relaymux",
+  "tmux": {
+    "sessionMode": "per-worktree",
+    "sessionPrefix": "rmx"
+  },
   "imessage": {
     "chatId": "CHAT_ID_OR_PHONE",
     "recipient": "+15555550123",
@@ -32,6 +36,8 @@
     "tokenFile": "~/.local/state/relaymux/webhook-token",
     "maxBodyBytes": 65536,
     "launchAgentLabel": "com.relaymux.daemon",
+    "launchMode": "direct",
+    "supervisorPollMs": 15000,
     "logDir": "~/.local/state/relaymux/logs"
   },
   "orchestrator": {

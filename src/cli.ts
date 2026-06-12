@@ -8,13 +8,14 @@ import { buildAgentInvocation, buildTmuxShellCommand, buildTmuxShellScript, quot
 import { collectDoctorChecks } from "./doctor.js";
 import { defaultConfigPath, loadConfig, resolveStateDir, writeConfig, writeDefaultConfig } from "./config.js";
 import { runDaemon } from "./daemon.js";
-import { installLaunchAgent, launchAgentPath, stopLaunchAgent, uninstallLaunchAgent } from "./launch-agent.js";
+import { getLaunchAgentStatus, installLaunchAgent, launchAgentPath, printLaunchAgentStatus, restartLaunchAgent, uninstallLaunchAgent } from "./launch-agent.js";
 import { handleNotify } from "./notify.js";
 import { webhookConfig, webhookStatus } from "./webhook.js";
 import { expandPath, ensureDirectory, pathExists, readTextFile } from "./paths.js";
 import { buildImsgConfig, initOptionsFromFlags, resolveImsgChatId } from "./setup-imsg.js";
 import { latestEventsByRun, readRuns, recordRun, writePromptFile, writeScriptFile } from "./state.js";
-import { createAgentWindow, createCommandPane, createCommandWindow, killWindowByName, listAgentWindows, selectLayout, sendShellCommand, setWindowMetadata, validateSessionName } from "./tmux.js";
+import { resolveLaunchSession, resolveTmuxSessionMode } from "./session.js";
+import { createAgentWindow, createCommandWindow, killWindowByName, listAgentWindows, sendShellCommand, setWindowMetadata, validateSessionName } from "./tmux.js";
 import { createWorktree, resolveRepoAndWorkdir } from "./worktree.js";
 
 export async function main(argv, io = defaultIo()) {
@@ -58,13 +59,20 @@ export async function main(argv, io = defaultIo()) {
       case "request":
         return handleAsk(parsed.flags, parsed.positionals, configInfo, io);
       case "daemon":
-        return runDaemon({ flags: parsed.flags, configInfo, stateDir, io });
+        return await runDaemon({ flags: parsed.flags, configInfo, stateDir, io });
       case "start-tmux":
         return handleStartTmux(parsed.flags, configInfo, stateDir, io);
       case "supervise-tmux":
-        return handleSuperviseTmux(parsed.flags, configInfo, stateDir, io);
+        return await handleSuperviseTmux(parsed.flags, configInfo, stateDir, io);
       case "install-launch-agent":
         installLaunchAgent({ flags: parsed.flags, configInfo, binPath: process.argv[1], io });
+        return 0;
+      case "restart-launch-agent":
+        restartLaunchAgent({ flags: parsed.flags, configInfo, binPath: process.argv[1], io });
+        return 0;
+      case "status-launch-agent":
+      case "launch-agent-status":
+        printLaunchAgentStatus({ config: configInfo.config, io, json: Boolean(parsed.flags.json) });
         return 0;
       case "uninstall-launch-agent":
         uninstallLaunchAgent({ config: configInfo.config, io });
@@ -122,7 +130,7 @@ async function handleInit(flags, io) {
     }, io.env);
     const target = writeConfig(flags.config || defaultConfigPath(io.env), config, { force: Boolean(flags.force) });
     io.stdout.write(`Created ${target} with imsg defaults\n`);
-    io.stdout.write("Next: relaymux doctor && relaymux daemon\n");
+    io.stdout.write("Next: relaymux doctor && relaymux restart-launch-agent && relaymux status\n");
     if (flags.installLaunchAgent) {
       installLaunchAgent({
         flags: { load: flags.load },
@@ -153,11 +161,10 @@ function handleLaunch(flags, configInfo, stateDir, io) {
 
   const prompt = resolvePrompt(flags);
   const runId = flags.runId || makeRunId();
-  const session = flags.session || io.env.RELAYMUX_SESSION || config.session || "agents";
-  validateSessionName(session);
-
   const { repo, workdir, worktreeAddArgs } = resolveRepoAndWorkdir(flags);
   const name = sanitizeName(flags.name || `${agentName}-${path.basename(workdir)}-${runId.slice(-6)}`);
+  const sessionInfo = resolveLaunchSession({ flags, config, env: io.env, repo, workdir, name });
+  const session = sessionInfo.session;
   const holdOnExit = flags.hold ?? config.holdOnExit ?? false;
 
   if (flags.dryRun) {
@@ -177,6 +184,7 @@ function handleLaunch(flags, configInfo, stateDir, io) {
       workdir,
     });
     const shellCommand = buildTmuxShellCommand(scriptFile);
+    io.stdout.write(`# tmux session: ${session} (${sessionInfo.mode}; ${sessionInfo.source})\n`);
     if (worktreeAddArgs) {
       io.stdout.write(`worktree: ${quoteArgv(["git", ...worktreeAddArgs])}\n`);
     }
@@ -225,6 +233,8 @@ function handleLaunch(flags, configInfo, stateDir, io) {
     relaymux_name: name,
     relaymux_repo: repo,
     relaymux_run_id: runId,
+    relaymux_session: session,
+    relaymux_session_mode: sessionInfo.mode,
     relaymux_started: started,
   });
   sendShellCommand(target.target, shellCommand);
@@ -233,6 +243,8 @@ function handleLaunch(flags, configInfo, stateDir, io) {
     time: started,
     runId,
     session,
+    sessionMode: sessionInfo.mode,
+    sessionSource: sessionInfo.source,
     target: target.target,
     windowTarget: target.windowTarget,
     name,
@@ -244,7 +256,7 @@ function handleLaunch(flags, configInfo, stateDir, io) {
     command: shellCommand,
   });
 
-  io.stdout.write(`Started ${name} in tmux target ${target.target}\n`);
+  io.stdout.write(`Started ${name} in tmux session ${session} tab ${target.windowTarget} (target ${target.target})\n`);
   io.stdout.write(`Run ID: ${runId}\n`);
   if (flags.attach) {
     io.stdout.write(`Attach with: tmux attach -t ${session}\n`);
@@ -283,6 +295,9 @@ async function handleAsk(flags, positionals, configInfo, io) {
 }
 
 function handleStartTmux(flags, configInfo, stateDir, io) {
+  if (!flags.allowTmuxDaemon) {
+    throw new Error("start-tmux daemon mode is retired: iMessage/background/orchestrator must run as a direct LaunchAgent outside tmux. Use `relaymux restart-launch-agent` for the background service and `relaymux launch` for feature tmux sessions.");
+  }
   if (!flags.session) {
     throw new Error("Missing --session <name> for start-tmux");
   }
@@ -314,11 +329,7 @@ function handleStartTmux(flags, configInfo, stateDir, io) {
     io.stdout.write(`# session: ${session}\n`);
     io.stdout.write(`# window: ${windowName}\n`);
     io.stdout.write(`# cwd: ${cwd}\n`);
-    if (flags.keepLaunchAgent || flags.stopLaunchAgent === false) {
-      io.stdout.write("# leaving configured LaunchAgent alone\n");
-    } else {
-      io.stdout.write(`# would stop LaunchAgent ${config.daemon?.launchAgentLabel || "com.relaymux.daemon"} if loaded\n`);
-    }
+    io.stdout.write("# leaving configured LaunchAgent/background service alone\n");
     if (flags.restart !== false) {
       io.stdout.write(`# would replace existing tmux window ${session}:${windowName} if present\n`);
     }
@@ -336,9 +347,6 @@ function handleStartTmux(flags, configInfo, stateDir, io) {
   }
 
   ensureDirectory(stateDir);
-  if (!flags.keepLaunchAgent && flags.stopLaunchAgent !== false) {
-    stopLaunchAgent({ config, io });
-  }
   if (flags.restart !== false) {
     killWindowByName({ session, name: windowName });
   }
@@ -363,22 +371,12 @@ function handleStartTmux(flags, configInfo, stateDir, io) {
   });
 
   const extraTargets = [];
-  let createdPane = false;
   for (const extraWindow of resolveExtraTmuxWindows(config, { configPath: configInfo.path, session, stateDir })) {
+    if (extraWindow.deprecatedMode) {
+      io.stderr.write(`relaymux: tmux.extraWindows mode=${extraWindow.deprecatedMode} is deprecated; creating a normal tmux tab/window instead.\n`);
+    }
     if (flags.restart !== false && extraWindow.restart !== false) {
       killWindowByName({ session, name: extraWindow.name });
-    }
-
-    if (extraWindow.mode === "pane") {
-      const extraTarget = createCommandPane({
-        windowTarget: target.windowTarget,
-        cwd: extraWindow.cwd,
-        shellCommand: extraWindow.shellCommand,
-        split: extraWindow.split,
-      });
-      createdPane = true;
-      extraTargets.push({ ...extraWindow, target: extraTarget.target });
-      continue;
     }
 
     const extraTarget = createCommandWindow({
@@ -400,9 +398,6 @@ function handleStartTmux(flags, configInfo, stateDir, io) {
     });
     extraTargets.push({ ...extraWindow, target: extraTarget.target });
   }
-  if (createdPane) {
-    selectLayout(target.windowTarget, "tiled");
-  }
 
   io.stdout.write(`Started relaymux daemon in tmux target ${target.target}\n`);
   for (const extraTarget of extraTargets) {
@@ -418,6 +413,9 @@ function handleStartTmux(flags, configInfo, stateDir, io) {
 }
 
 async function handleSuperviseTmux(flags, configInfo, stateDir, io) {
+  if (!flags.allowTmuxDaemon) {
+    throw new Error("supervise-tmux daemon mode is retired: the background iMessage/orchestrator service must run direct outside tmux.");
+  }
   const config = configInfo.config;
   const session = String(flags.session || io.env.RELAYMUX_SESSION || config.session || "agents");
   validateSessionName(session);
@@ -484,14 +482,7 @@ function tmuxStackRepairReason(config, session, windowName) {
   }
 
   const extraWindows = Array.isArray(config.tmux?.extraWindows) ? config.tmux.extraWindows : [];
-  const paneExtras = extraWindows.filter((extraWindow) => extraWindow.mode === "pane").length;
-  const expectedPanes = 1 + paneExtras;
-  if (paneExtras > 0 && Number(daemonWindow.panes || 0) < expectedPanes) {
-    return `daemon window has ${daemonWindow.panes || 0}/${expectedPanes} expected pane(s)`;
-  }
-
   for (const [index, extraWindow] of extraWindows.entries()) {
-    if (extraWindow.mode === "pane") continue;
     const name = sanitizeName(extraWindow.name || `extra-${index + 1}`);
     const exists = windows.some((window) => window.agent === "extra" && (window.name === name || window.windowName === name));
     if (!exists) {
@@ -514,8 +505,7 @@ function resolveExtraTmuxWindows(config, context) {
       index: String(index),
     };
     const cwd = expandPath(renderTemplate(extraWindow.cwd || config.orchestrator?.cwd || "~", templateContext));
-    const mode = extraWindow.mode === "pane" ? "pane" : "window";
-    const split = extraWindow.split === "vertical" ? "vertical" : "horizontal";
+    const deprecatedMode = extraWindow.mode === "pane" ? "pane" : "";
     const env: Record<string, string> = {
       RELAYMUX_CONFIG: context.configPath,
       RELAYMUX_SESSION: context.session,
@@ -542,10 +532,10 @@ function resolveExtraTmuxWindows(config, context) {
     return {
       name,
       cwd,
-      mode,
+      deprecatedMode,
+      mode: "window",
       restart: extraWindow.restart,
       shellCommand,
-      split,
     };
   });
 }
@@ -557,8 +547,8 @@ function buildLaunchShellScript(agentName, agentConfig, context) {
 
 function handleStatus(flags, configInfo, stateDir, io) {
   const config = configInfo.config;
-  const session = flags.session || io.env.RELAYMUX_SESSION || config.session;
-  const windows = listAgentWindows({ session: flags.all ? undefined : session });
+  const session = flags.session ? String(flags.session) : undefined;
+  const windows = listAgentWindows({ session });
   const windowsByRunId = new Map(windows.map((window) => [window.runId, window]));
   const latestEvents = latestEventsByRun(stateDir);
   const rows = [];
@@ -586,14 +576,21 @@ function handleStatus(flags, configInfo, stateDir, io) {
     return 0;
   }
 
-  io.stdout.write(`Daemon: ${daemon.enabled ? "enabled" : "disabled"}; webhook ${daemon.webhook.endpoints.message}; token ${daemon.webhook.tokenFileExists ? daemon.webhook.tokenFileMode : "missing"}; LaunchAgent ${daemon.launchAgentPath}\n`);
+  const launchAgent: any = daemon.launchAgent;
+  const launchAgentText = launchAgent.supported
+    ? launchAgent.loaded
+      ? `LaunchAgent ${launchAgent.label} loaded${launchAgent.running ? ` pid=${launchAgent.pid}` : ""}`
+      : `LaunchAgent ${launchAgent.label} not loaded`
+    : `LaunchAgent unsupported on ${process.platform}`;
+  io.stdout.write(`Background service: ${daemon.enabled ? "enabled" : "disabled"}; mode ${daemon.launchMode}/background (no tmux); ${launchAgentText}; webhook ${daemon.webhook.endpoints.message}; token ${daemon.webhook.tokenFileExists ? daemon.webhook.tokenFileMode : "missing"}\n`);
+  io.stdout.write(`Feature tmux: session mode ${daemon.featureSessionMode}; ${session ? `filter session ${session}` : "showing all relaymux-managed sessions"}; tabs are tmux windows, never panes/splits.\n`);
 
   if (rows.length === 0) {
-    io.stdout.write(flags.history ? "No relaymux runs found.\n" : "No relaymux tmux windows found. Use --history to include old run records.\n");
+    io.stdout.write(flags.history ? "No relaymux runs found.\n" : "No relaymux feature tabs found. Use --history to include old run records.\n");
     return 0;
   }
 
-  io.stdout.write(formatTable(rows, ["state", "target", "agent", "name", "repo", "lastEvent"]));
+  io.stdout.write(formatTable(rows, ["state", "target", "session", "tab", "agent", "name", "repo", "lastEvent"]));
   return 0;
 }
 
@@ -601,8 +598,11 @@ function daemonStatus(config, configPath) {
   return {
     enabled: config.daemon?.enabled !== false,
     configPath,
+    launchMode: "direct",
+    featureSessionMode: resolveTmuxSessionMode({ config }),
     webhook: webhookStatus(config),
     launchAgentPath: launchAgentPath(config),
+    launchAgent: getLaunchAgentStatus(config),
   };
 }
 
@@ -614,17 +614,30 @@ function statusRow(run, window, latestEvent) {
         ? "running"
         : "window-missing";
 
+  const target = window?.target || run.windowTarget || run.target || "";
   return {
     runId: run.runId,
     started: run.time || run.started,
     state,
-    target: window?.target || run.windowTarget || run.target || "",
+    target,
+    session: window?.session || run.session || targetSession(target),
+    tab: window ? `${window.windowIndex}:${window.windowName}` : targetTab(target),
     agent: run.agent || window?.agent || "",
     name: run.name || window?.name || "",
     repo: run.repo || window?.repo || "",
     workdir: run.workdir || window?.cwd || "",
     lastEvent: latestEvent ? `${latestEvent.event}${latestEvent.message ? `: ${latestEvent.message}` : ""}` : "",
   };
+}
+
+function targetSession(target) {
+  return String(target || "").split(":")[0] || "";
+}
+
+function targetTab(target) {
+  const text = String(target || "");
+  const tab = text.includes(":") ? text.slice(text.indexOf(":") + 1) : text;
+  return tab.replace(/\.\d+$/, "");
 }
 
 function handleDoctor(configInfo, io) {
@@ -764,20 +777,29 @@ function defaultIo() {
 }
 
 function helpText() {
-  return `relaymux - run local coding agents in tmux
+  return `relaymux - relay iMessage/SMS requests to local coding agents
+
+Mental model:
+  - iMessage/background/orchestrator runs as a direct macOS LaunchAgent outside tmux.
+  - Each worktree/task group gets its own tmux session by default.
+  - Agents in a task group appear as tmux tabs/windows, never panes/splits.
+
+Start here:
+  relaymux setup
+  relaymux doctor
+  relaymux status
 
 Usage:
   relaymux setup [--imsg] [--chat-id <id>] [--no-launch-agent]
   relaymux init [--force] [--config <path>]
   relaymux init --imsg [--chat-id <id>] [--install-launch-agent]
-  relaymux daemon [--once]
-  relaymux start-tmux --session <name>
-  relaymux supervise-tmux [--session <name>]
   relaymux install-launch-agent [--dry-run] [--no-load]
+  relaymux restart-launch-agent [--dry-run] [--no-load]
+  relaymux status-launch-agent [--json]
   relaymux uninstall-launch-agent
   relaymux launch --repo <path> --agent <name> --prompt <text|@file> [--name <name>]
   relaymux ask <text> [--no-wait] [--reply-mode imessage|none]
-  relaymux status [--json] [--session <name>] [--all]
+  relaymux status [--json] [--session <name>]
   relaymux notify [--run-id <id>] [--reply-mode imessage|none] [--message <text>]
   relaymux doctor
 
@@ -785,37 +807,28 @@ Setup/init options:
   --imsg                    Create an imsg-based config and prompt for a chat when possible
   --chat-id <id>            Messages chat id/phone for imsg history/send
   --cwd <path>              Working directory for Pi and message commands
-  --state-dir <path>        State/session/token directory
-  --install-launch-agent    Install the LaunchAgent after writing config
+  --state-dir <path>        State/token/log directory
+  --install-launch-agent    Install the direct/background LaunchAgent after writing config
   --no-launch-agent         For setup: skip LaunchAgent installation
 
 Launch options:
   --prompt-file <path>       Read prompt from a file
-  --session <name>           Override tmux session
+  --session <name>           Explicitly group this agent into a tmux task session
+  --session-mode <mode>      per-worktree (default) or shared
   --worktree <path>          Launch from a generic git worktree path
   --create-worktree          Create --worktree with git worktree add when missing
-  --worktree-branch <name>   Branch name to use with --create-worktree
+  --worktree-branch <name>   Branch name to use with --create-worktree/session naming
   --worktree-from <ref>      Starting ref to use with --create-worktree
-  --dry-run                  Print the tmux shell command without launching
-  --print-command            Print the tmux shell command before launching
+  --dry-run                  Print the tmux tab command without launching
+  --print-command            Print the tmux tab command before launching
   --hold                     Keep a shell open after the agent exits
   --attach                   Print attach command after launch
 
-Tmux daemon options:
-  --session <name>           Required for start-tmux; tmux session to create/use
-  --window-name <name>       Daemon window name (default: relaymux-daemon)
-  --no-restart               Do not replace an existing daemon window of the same name
-  --keep-launch-agent        Do not stop the configured macOS LaunchAgent first
-  --hold                     Keep a shell open if the daemon exits
-  --attach                   Print attach command after start
+Background service options:
+  --no-load                  Write the LaunchAgent plist without loading it
+  --keep-tmux-daemon         During migration, do not stop an old relaymux-daemon tmux tab
 
-Supervisor options:
-  --interval-ms <ms>         How often supervise-tmux checks the tmux stack
-  --once                     Check/start once, then exit
-
-Daemon/request/notify options:
-  --once                     Poll once, drain queued work, then exit (for smoke tests)
-  --session <name>           Runtime session override for daemon-launched subagents
+Request/notify/status options:
   --message <text>           Request/notify message text
   --no-wait                  For ask/request: enqueue and return immediately
   --timeout-ms <ms>          For ask/request: client-side wait timeout
@@ -823,7 +836,11 @@ Daemon/request/notify options:
   --from <name>              For notify: source/subagent name
   --idempotency-key <key>    For notify: suppress duplicate completion webhook retries
   --metadata-json <json>     For notify: optional metadata object
-  --history                  For status: include old run records whose tmux windows are gone
+  --history                  For status: include old run records whose tmux tabs are gone
+
+Useful commands:
+  tmux attach -t <feature-session>       attach to a feature/task session
+  tmux kill-session -t <feature-session> kill only that feature session; background iMessage keeps running
 
 Config defaults to ${defaultConfigPath()}.
 `;
