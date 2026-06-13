@@ -45,6 +45,8 @@
     "command": ["pi", "{prompt}"],
     "promptMode": "arg",
     "timeoutMs": 0,
+    "timeoutMode": "activity",
+    "hardTimeoutMs": 0,
     "systemPromptFile": "",
     "extraSystemPrompt": ""
   },

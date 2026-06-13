@@ -285,8 +285,14 @@ async function closeServer(server) {
 
 function describeError(error) {
   const parts = [error?.message || String(error)];
-  if (error?.stdout?.trim()) parts.push(`stdout: ${error.stdout.trim()}`);
-  if (error?.stderr?.trim()) parts.push(`stderr: ${error.stderr.trim()}`);
+  const stdoutBytes = Buffer.byteLength(String(error?.stdout || ""));
+  const stderrBytes = Buffer.byteLength(String(error?.stderr || ""));
+  if (stdoutBytes) parts.push(`stdout captured: ${stdoutBytes} bytes`);
+  if (stderrBytes) parts.push(`stderr captured: ${stderrBytes} bytes`);
+  if (error?.lastActivityAt) {
+    parts.push(`last activity: ${error.lastActivityAt}${error.lastActivityReason ? ` (${error.lastActivityReason})` : ""}`);
+  }
+  if (error?.signal) parts.push(`signal: ${error.signal}`);
   return parts.join("\n");
 }
 

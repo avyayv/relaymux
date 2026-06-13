@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { spawn } from "node:child_process";
 
 export function runCommandAsync(command: string, args: string[] = [], options: any = {}): Promise<any> {
@@ -9,31 +10,82 @@ export function runCommandAsync(command: string, args: string[] = [], options: a
     });
 
     const maxBuffer = options.maxBuffer ?? 10 * 1024 * 1024;
+    const timeoutMs = Number(options.timeoutMs || 0);
+    const hardTimeoutMs = Number(options.hardTimeoutMs || 0);
+    const timeoutMode = options.timeoutMode === "activity" ? "activity" : "wall";
+    const activityPaths = Array.isArray(options.activityPaths) ? options.activityPaths.filter(Boolean).map(String) : [];
     let stdout = "";
     let stderr = "";
     let settled = false;
     let timedOut = false;
+    let timeoutReason = "";
+    let timeoutAfterMs = timeoutMs;
+    let lastActivityAt = Date.now();
+    let lastActivityReason = "process start";
+    let lastActivityPathMtimeMs = maxActivityPathMtime(activityPaths);
+    let activityTimer = null;
+    let wallTimer = null;
+    let hardTimer = null;
+
+    const markActivity = (reason) => {
+      lastActivityAt = Date.now();
+      lastActivityReason = reason;
+    };
+
+    const clearTimers = () => {
+      if (activityTimer) clearInterval(activityTimer);
+      if (wallTimer) clearTimeout(wallTimer);
+      if (hardTimer) clearTimeout(hardTimer);
+    };
 
     const finish = (fn, value) => {
       if (settled) return;
       settled = true;
-      if (timer) clearTimeout(timer);
+      clearTimers();
       fn(value);
     };
 
-    const timer = options.timeoutMs && options.timeoutMs > 0
-      ? setTimeout(() => {
-          timedOut = true;
-          child.kill("SIGTERM");
-          setTimeout(() => {
-            if (!settled) child.kill("SIGKILL");
-          }, 1000).unref?.();
-        }, options.timeoutMs)
-      : null;
-    timer?.unref?.();
+    const killForTimeout = (reason, afterMs) => {
+      if (settled || timedOut) return;
+      timedOut = true;
+      timeoutReason = reason;
+      timeoutAfterMs = afterMs;
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (!settled) child.kill("SIGKILL");
+      }, 1000).unref?.();
+    };
+
+    const refreshActivityPaths = () => {
+      const mtimeMs = maxActivityPathMtime(activityPaths);
+      if (mtimeMs > lastActivityPathMtimeMs) {
+        lastActivityPathMtimeMs = mtimeMs;
+        markActivity("activity file updated");
+      }
+    };
+
+    if (timeoutMs > 0 && timeoutMode === "activity") {
+      const intervalMs = Number(options.activityCheckIntervalMs || Math.max(25, Math.min(1000, Math.floor(timeoutMs / 4))));
+      activityTimer = setInterval(() => {
+        refreshActivityPaths();
+        if (Date.now() - lastActivityAt >= timeoutMs) {
+          killForTimeout("inactivity", timeoutMs);
+        }
+      }, intervalMs);
+      activityTimer.unref?.();
+    } else if (timeoutMs > 0) {
+      wallTimer = setTimeout(() => killForTimeout("wall", timeoutMs), timeoutMs);
+      wallTimer.unref?.();
+    }
+
+    if (hardTimeoutMs > 0) {
+      hardTimer = setTimeout(() => killForTimeout("hard", hardTimeoutMs), hardTimeoutMs);
+      hardTimer.unref?.();
+    }
 
     const append = (which, chunk) => {
       const text = chunk.toString("utf8");
+      markActivity(which);
       if (which === "stdout") stdout += text;
       else stderr += text;
       if (stdout.length + stderr.length > maxBuffer) {
@@ -56,15 +108,26 @@ export function runCommandAsync(command: string, args: string[] = [], options: a
 
     child.on("close", (status, signal) => {
       const code = status ?? 1;
-      const result = { status: code, signal, stdout, stderr };
+      const result = {
+        status: code,
+        signal,
+        stdout,
+        stderr,
+        timedOut,
+        timeoutReason,
+        timeoutMs: timeoutAfterMs,
+        lastActivityAt: new Date(lastActivityAt).toISOString(),
+        lastActivityReason,
+      };
       if (timedOut) {
-        const error: any = new Error(`${command} timed out after ${options.timeoutMs}ms`);
+        const detail = timeoutReason === "inactivity" ? " without output or activity" : "";
+        const error: any = new Error(`${command} timed out after ${timeoutAfterMs}ms${detail}`);
         Object.assign(error, result);
         finish(reject, error);
         return;
       }
       if (code !== 0 && !options.allowFailure) {
-        const error: any = new Error(stderr.trim() || `${command} ${args.join(" ")} exited with ${code}`);
+        const error: any = new Error(`${command} exited with ${code}`);
         Object.assign(error, result);
         finish(reject, error);
         return;
@@ -78,4 +141,14 @@ export function runCommandAsync(command: string, args: string[] = [], options: a
       child.stdin.end();
     }
   });
+}
+
+function maxActivityPathMtime(activityPaths: string[]) {
+  let max = 0;
+  for (const activityPath of activityPaths) {
+    try {
+      max = Math.max(max, fs.statSync(activityPath).mtimeMs);
+    } catch {}
+  }
+  return max;
 }

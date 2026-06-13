@@ -62,6 +62,8 @@ export function defaultConfig(env = process.env) {
       command: ["pi", "{prompt}"],
       promptMode: "arg",
       timeoutMs: 0,
+      timeoutMode: "activity",
+      hardTimeoutMs: 0,
       maxBufferBytes: 10 * 1024 * 1024,
       systemPromptFile: "",
       extraSystemPrompt: "",

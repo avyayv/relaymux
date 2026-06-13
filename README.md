@@ -62,7 +62,7 @@ tmux attach -t agents
 
 The background daemon runs directly as a macOS LaunchAgent, which is a per-user background service managed by launchd. It polls your configured message source, receives local terminal requests from `relaymux ask`, runs your orchestrator command, and sends replies. It does **not** run inside `tmux`.
 
-The orchestrator is just a command from your config. It receives the incoming request as prompt text, and whatever it prints to stdout becomes the reply. Use a non-interactive command whose stdout is a clean final response; if a CLI mixes logs into stdout, wrap it. If the orchestrator exits nonzero or times out, relaymux sends an error update instead.
+The orchestrator is just a command from your config. It receives the incoming request as prompt text, and whatever it prints to stdout becomes the reply. Use a non-interactive command whose stdout is a clean final response; if a CLI mixes logs into stdout, wrap it. If the orchestrator exits nonzero or times out, relaymux sends an error update instead. For orchestrators with `timeoutMs`, the default `timeoutMode` is `activity`: relaymux treats stdout/stderr and known Pi session-file writes as heartbeats, so healthy long turns are not killed by a fixed wall-clock timer.
 
 The default setup uses [Pi](https://github.com/earendil-works/pi) in non-interactive mode. Pi can use shell tools, so it can decide to run `relaymux launch` for longer work. You can replace Pi with any command that accepts a prompt and prints a reply, but that command can only launch delegated agents if it has a way to run shell commands.
 
@@ -146,7 +146,9 @@ New relaymux-managed prompts, run records, completion notes, logs, and generated
   "orchestrator": {
     "cwd": "~",
     "command": ["pi", "--print", "--continue", "--session-dir", "~/.relaymux/state/sessions", "{prompt}"],
-    "promptMode": "arg"
+    "promptMode": "arg",
+    "timeoutMs": 0,
+    "timeoutMode": "activity"
   },
   "agents": {
     "pi": {

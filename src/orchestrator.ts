@@ -106,6 +106,10 @@ export async function runOrchestrator(config, { prompt, stateDir, configPath, re
     env,
     input,
     timeoutMs: Number(orchestrator.timeoutMs || 0),
+    timeoutMode: orchestrator.timeoutMode || "activity",
+    hardTimeoutMs: Number(orchestrator.hardTimeoutMs || 0),
+    activityCheckIntervalMs: Number(orchestrator.activityCheckIntervalMs || 0),
+    activityPaths: resolveOrchestratorActivityPaths(invocation.argv),
     maxBuffer: Number(orchestrator.maxBufferBytes || 10 * 1024 * 1024),
   });
 
@@ -131,6 +135,37 @@ function sanitizeFilePart(value) {
 
 function makeRequestId() {
   return `orch-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+}
+
+function resolveOrchestratorActivityPaths(argv) {
+  const paths = [];
+  for (let index = 0; index < argv.length - 1; index += 1) {
+    const value = String(argv[index + 1] || "");
+    if (argv[index] === "--session" && (value.includes("/") || value.endsWith(".jsonl"))) {
+      paths.push(expandPath(value));
+    }
+    if (argv[index] === "--session-dir") {
+      const latest = latestJsonlFile(expandPath(value));
+      if (latest) paths.push(latest);
+    }
+  }
+  return Array.from(new Set(paths));
+}
+
+function latestJsonlFile(dir) {
+  try {
+    let latest = null;
+    for (const entry of fs.readdirSync(dir)) {
+      if (!entry.endsWith(".jsonl")) continue;
+      const file = path.join(dir, entry);
+      const stat = fs.statSync(file);
+      if (!stat.isFile()) continue;
+      if (!latest || stat.mtimeMs > latest.mtimeMs) latest = { file, mtimeMs: stat.mtimeMs };
+    }
+    return latest?.file || null;
+  } catch {
+    return null;
+  }
 }
 
 function formatHostForUrl(host) {
