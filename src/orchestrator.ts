@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
+import { runCloudBaseOrchestrator, resolveOrchestratorBackend } from "./cloud-base.js";
 import { buildAgentInvocation } from "./command.js";
 import { DEFAULT_ORCHESTRATOR_SYSTEM_PROMPT, buildRuntimePromptContext } from "./prompt.js";
 import { resolveStateDir, resolveTokenFile } from "./config.js";
@@ -54,6 +55,7 @@ export function buildFullPrompt({ config, configPath, title, body }) {
   const daemon = config.daemon || {};
   const system = [
     DEFAULT_ORCHESTRATOR_SYSTEM_PROMPT,
+    buildCloudModePrompt(config),
     readOptionalPromptFile(config.orchestrator?.systemPromptFile),
     config.orchestrator?.extraSystemPrompt,
   ].filter((part) => String(part || "").trim()).join("\n\n");
@@ -74,7 +76,19 @@ export function buildFullPrompt({ config, configPath, title, body }) {
 
 export async function runOrchestrator(config, { prompt, stateDir, configPath, requestId }) {
   const orchestrator = config.orchestrator || {};
-  const promptFile = writeOrchestratorPrompt(stateDir, requestId || makeRequestId(), prompt);
+  const resolvedRequestId = requestId || makeRequestId();
+  const promptFile = writeOrchestratorPrompt(stateDir, resolvedRequestId, prompt);
+
+  if (resolveOrchestratorBackend(config) === "cloud") {
+    return await runCloudBaseOrchestrator(config, {
+      prompt,
+      promptFile,
+      stateDir,
+      configPath,
+      requestId: resolvedRequestId,
+    });
+  }
+
   const cwd = expandPath(orchestrator.cwd || "~");
   const invocation = buildAgentInvocation("orchestrator", orchestrator, {
     prompt,
@@ -87,7 +101,7 @@ export async function runOrchestrator(config, { prompt, stateDir, configPath, re
     repo: cwd,
     workdir: cwd,
     name: "orchestrator",
-    runId: requestId || "orchestrator",
+    runId: resolvedRequestId,
   });
 
   const input = invocation.stdinFile ? fs.readFileSync(invocation.stdinFile, "utf8") : undefined;
@@ -110,6 +124,28 @@ export async function runOrchestrator(config, { prompt, stateDir, configPath, re
   });
 
   return result.stdout.trim() || result.stderr.trim() || "Done.";
+}
+
+function buildCloudModePrompt(config) {
+  if (resolveOrchestratorBackend(config) !== "cloud") return "";
+  const workspaces = Array.isArray(config.cloudHands?.workspaces) ? config.cloudHands.workspaces : [];
+  const workspaceLines = workspaces.length
+    ? workspaces.map((workspace) => {
+        const permissions = [
+          workspace.read !== false ? "read" : "",
+          workspace.write === true ? "write" : "",
+          workspace.shell === true ? "shell" : "",
+        ].filter(Boolean).join(",") || "none";
+        return `  - ${workspace.name || "workspace"}: ${permissions}`;
+      }).join("\n")
+    : "  - none configured; ask for a workspace or report a blocker before requesting local tool execution";
+
+  return `Cloud base/local hands mode:
+- You are the durable base agent running outside the user's Mac. Do not assume your own process has the Mac's filesystem, shell, tmux, or local CLIs.
+- For local filesystem or shell work, use the relaymux.hands.v1 mechanism exposed by the cloud service to queue tasks for a connected local hands worker.
+- Hands tasks must target an allowlisted workspace name and a relative path/cwd inside that workspace. Do not request ../ escapes, absolute paths outside a workspace, or secret material.
+- Writes and shell are only allowed when the workspace has those permissions. If the needed permission is absent, ask the user for approval/config changes or report a blocker.
+- Configured hands workspace capabilities known at prompt-build time:\n${workspaceLines}`;
 }
 
 function writeOrchestratorPrompt(stateDir, requestId, prompt) {

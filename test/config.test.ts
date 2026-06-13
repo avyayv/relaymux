@@ -19,6 +19,10 @@ test("writeDefaultConfig creates a loadable config", () => {
   assert.equal(config.daemon.host, "127.0.0.1");
   assert.equal(config.daemon.launchMode, "direct");
   assert.equal(config.tmux.sessionMode, "shared");
+  assert.equal(config.orchestrator.backend, "local");
+  assert.equal(config.cloudBase.enabled, false);
+  assert.equal(config.cloudHands.enabled, false);
+  assert.deepEqual(config.cloudHands.workspaces, []);
   assert.ok(config.orchestrator.command);
   assert.ok(config.agents.codex);
 });
@@ -34,6 +38,9 @@ test("default paths live under RELAYMUX_HOME when provided", () => {
   assert.equal(config.stateDir, path.join(home, "state"));
   assert.equal(config.daemon.tokenFile, path.join(home, "state", "webhook-token"));
   assert.equal(config.daemon.logDir, path.join(home, "logs"));
+  assert.equal(config.cloudBase.tokenFile, path.join(home, "state", "cloud-base-token"));
+  assert.equal(config.cloudHands.tokenFile, path.join(home, "state", "hands-token"));
+  assert.equal(config.cloudHands.devServer.stateFile, path.join(home, "state", "hands-dev-server.json"));
 });
 
 test("loadConfig falls back to the legacy default config path", () => {
@@ -54,6 +61,8 @@ test("loadConfig falls back to the legacy default config path", () => {
   assert.equal(info.config.session, "legacy");
   assert.equal(info.config.daemon.tokenFile, "~/.local/state/relaymux/webhook-token");
   assert.equal(info.config.daemon.logDir, "~/.local/state/relaymux/logs");
+  assert.equal(info.config.cloudBase.tokenFile, "~/.local/state/relaymux/cloud-base-token");
+  assert.equal(info.config.cloudHands.tokenFile, "~/.local/state/relaymux/hands-token");
 });
 
 test("loadConfig does not fall back when an explicit config path is missing", () => {

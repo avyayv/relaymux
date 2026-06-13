@@ -1,6 +1,10 @@
 const BOOLEAN_FLAGS = new Set([
   "all",
+  "allow-remote-dev-server",
+  "allow-shell",
   "allow-tmux-daemon",
+  "allow-write",
+  "append",
   "apply",
   "attach",
   "create-worktree",
@@ -17,6 +21,7 @@ const BOOLEAN_FLAGS = new Set([
   "launch-agent",
   "once",
   "print-command",
+  "read-only",
   "restart",
   "symlink",
   "version",

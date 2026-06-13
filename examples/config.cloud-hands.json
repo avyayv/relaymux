@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "session": "agents",
+  "stateDir": "~/.relaymux/state",
+  "orchestrator": {
+    "backend": "cloud"
+  },
+  "cloudBase": {
+    "endpoint": "https://relaymux-cloud.example.com",
+    "tokenFile": "~/.relaymux/state/cloud-base-token",
+    "sessionId": "my-mac-primary"
+  },
+  "cloudHands": {
+    "endpoint": "https://relaymux-cloud.example.com",
+    "tokenFile": "~/.relaymux/state/hands-token",
+    "workerId": "my-mac-hands",
+    "pollMs": 2000,
+    "leaseMs": 60000,
+    "workspaces": [
+      {
+        "name": "app",
+        "path": "~/code/my-app",
+        "read": true,
+        "write": true,
+        "shell": false
+      }
+    ]
+  }
+}

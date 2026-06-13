@@ -100,7 +100,7 @@ export PATH="$HOME/.local/bin:$PATH"
 ```text
 ~/.relaymux/
   config.json          # private config, mode 0600
-  state/               # daemon state, run records, prompts, scripts, webhook token
+  state/               # daemon state, run records, prompts, scripts, webhook/cloud/hands token files
   logs/                # LaunchAgent stdout/stderr logs
   tasks/               # default generated task scratch
   reports/             # optional generated reports
@@ -144,9 +144,22 @@ New relaymux-managed prompts, run records, completion notes, logs, and generated
     }
   },
   "orchestrator": {
+    "backend": "local",
     "cwd": "~",
     "command": ["pi", "--print", "--continue", "--session-dir", "~/.relaymux/state/sessions", "{prompt}"],
     "promptMode": "arg"
+  },
+  "cloudBase": {
+    "enabled": false,
+    "endpoint": "",
+    "tokenFile": "~/.relaymux/state/cloud-base-token",
+    "sessionId": "default"
+  },
+  "cloudHands": {
+    "enabled": false,
+    "endpoint": "",
+    "tokenFile": "~/.relaymux/state/hands-token",
+    "workspaces": []
   },
   "agents": {
     "pi": {
@@ -166,6 +179,8 @@ New relaymux-managed prompts, run records, completion notes, logs, and generated
 ```
 
 Agent commands are templates. If the command contains `{prompt}` or `{promptFile}`, relaymux substitutes those values. If it does not, `promptMode` decides what to do with the prompt. Valid values are `arg`, `env`, `stdin`, and `none`.
+
+`orchestrator.backend` defaults to `local`, which preserves the existing behavior of running the configured command on this Mac. Set it to `cloud` only when you have a cloud base-agent endpoint that implements the relaymux cloud-base contract described below.
 
 Prompts can be passed inline or read from a file. `--prompt @prompt.txt` means “read the prompt text from `prompt.txt`.” You can also use `--prompt-file prompt.txt`.
 
@@ -238,6 +253,120 @@ relaymux notify \
 `--reply-mode imessage` asks the daemon to send a user-visible text update. `--reply-mode none` still re-prompts the daemon/orchestrator path, but suppresses the outgoing iMessage. Use it for progress notes that should affect the orchestrator's context or logs without texting the user. Whether that context persists depends on your orchestrator command; the default Pi command uses `--continue` with a relaymux session directory.
 
 The idempotency key is a stable de-duplication string for one logical update. If a delegated agent retries the same completion notification, reuse the same key so relaymux does not send duplicate text messages.
+
+## Cloud base agent with local hands
+
+relaymux also has a remote/cloud mode scaffold for the “base agent in the cloud, hands on this Mac” architecture. This is off by default and does not change local tmux launches.
+
+```text
+iMessage/SMS or relaymux ask
+        │
+        ▼
+local relaymux daemon ──POST /v1/base/turns──▶ durable cloud base/session
+                                                   │
+                                                   │ queues tool tasks
+                                                   ▼
+local relaymux hands worker ◀─poll/result─▶ cloud hands endpoint
+        │
+        └── executes allowed read/write/shell tasks under explicit local workspaces
+```
+
+### Configure a cloud base client
+
+A production cloud service is outside this repo. The relaymux client contract is:
+
+- `orchestrator.backend: "cloud"` (or `cloudBase.enabled: true`) makes the daemon call `POST /v1/base/turns` instead of running `orchestrator.command` locally.
+- `cloudBase.endpoint` is the durable cloud base URL.
+- `cloudBase.tokenFile` contains the bearer token for the base endpoint. Keep it private; do not put token contents in config or logs.
+- The endpoint should persist turns by `sessionId`/`requestId` so a cloud process restart can resume from session state where practical.
+
+Example shape:
+
+```json
+{
+  "orchestrator": { "backend": "cloud" },
+  "cloudBase": {
+    "endpoint": "https://relaymux-cloud.example.com",
+    "tokenFile": "~/.relaymux/state/cloud-base-token",
+    "sessionId": "my-mac-primary"
+  },
+  "cloudHands": {
+    "endpoint": "https://relaymux-cloud.example.com",
+    "tokenFile": "~/.relaymux/state/hands-token",
+    "workspaces": [
+      { "name": "app", "path": "~/code/my-app", "read": true, "write": true, "shell": false }
+    ]
+  }
+}
+```
+
+### Run the local hands worker
+
+The hands worker connects outbound to the cloud endpoint. It never opens a public listener on your Mac.
+
+```bash
+relaymux hands run \
+  --endpoint https://relaymux-cloud.example.com \
+  --token-file ~/.relaymux/state/hands-token \
+  --workspace app=~/code/my-app \
+  --allow-write
+```
+
+Shell execution is a separate opt-in:
+
+```bash
+relaymux hands run \
+  --endpoint https://relaymux-cloud.example.com \
+  --token-file ~/.relaymux/state/hands-token \
+  --workspace app=~/code/my-app \
+  --allow-write \
+  --allow-shell
+```
+
+For config-based multi-workspace setups, use `cloudHands.workspaces`. Each workspace has independent `read`, `write`, and `shell` permissions. Paths requested by cloud tasks are resolved under the selected workspace root; `..` escapes and symlinks outside the root are rejected.
+
+### Local dev smoke without a production cloud
+
+`relaymux hands serve-dev` starts a loopback-only mock cloud endpoint with durable JSON state. It refuses non-loopback hosts unless you explicitly pass `--allow-remote-dev-server` for private-network testing. It implements:
+
+- `POST /v1/base/turns` for a mock cloud-base reply.
+- `POST /v1/tasks`, `GET /v1/tasks/:id` for enqueueing/inspecting tool tasks.
+- `POST /v1/hands/poll`, `POST /v1/hands/result` for the local worker protocol.
+
+Smoke it in three terminals:
+
+```bash
+relaymux hands serve-dev \
+  --state-file /tmp/relaymux-hands-state.json \
+  --token-file /tmp/relaymux-hands-token
+```
+
+```bash
+mkdir -p /tmp/relaymux-hands-workspace
+printf 'hello\n' > /tmp/relaymux-hands-workspace/hello.txt
+relaymux hands enqueue read-file \
+  --endpoint http://127.0.0.1:47773 \
+  --token-file /tmp/relaymux-hands-token \
+  --workspace app \
+  --path hello.txt
+```
+
+```bash
+relaymux hands run \
+  --endpoint http://127.0.0.1:47773 \
+  --token-file /tmp/relaymux-hands-token \
+  --workspace app=/tmp/relaymux-hands-workspace \
+  --once
+```
+
+If the worker dies after claiming a task, the task remains leased until `leaseMs` expires; a restarted worker with matching workspace capabilities can reclaim it. The dev server persists turns/tasks to its state file so restarts can continue with existing queued or leased work.
+
+### Threat model and caveats
+
+- Tokens authenticate the cloud base and hands endpoints. Store only token file paths in config; never commit token contents.
+- The worker only executes tasks inside configured workspaces. Reads default on for CLI workspaces; writes and shell are explicit opt-ins. Config workspaces default to read-only unless `write`/`shell` are set to `true`.
+- A cloud endpoint that can queue shell tasks for a shell-enabled workspace effectively has command execution in that workspace. Use separate workspace names/tokens for different trust levels.
+- This repo does not ship a production cloud scheduler/model runtime. `serve-dev` is for protocol tests and local smoke only; production still needs auth, audit logs, tenant isolation, retention policy, and a durable queue/session store.
 
 ## Migrating old relaymux-managed files
 
@@ -360,4 +489,4 @@ node ./dist/bin/relaymux.js --config examples/config.mock.json status
 
 ## Notes
 
-relaymux does not include private prompts, phone numbers, secrets, or repo-specific context. The notify endpoint binds to localhost and requires the token file.
+relaymux does not include private prompts, phone numbers, secrets, or repo-specific context. The notify endpoint binds to localhost and requires the token file. Cloud-base/local-hands mode is opt-in and stores only token file paths in config; keep token file contents private.

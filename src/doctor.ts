@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { resolveCloudBaseConfig, resolveOrchestratorBackend } from "./cloud-base.js";
 import { defaultConfigPath, legacyDefaultConfigPath, resolveLogDir, resolveStateDir } from "./config.js";
+import { fileMode } from "./remote.js";
 import { runCommand } from "./process.js";
 import { launchAgentPath } from "./launch-agent.js";
 import { defaultRelaymuxHome } from "./paths.js";
@@ -83,7 +85,22 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
     });
   }
 
-  checks.push(commandCheck("orchestrator", config.orchestrator?.command?.[0], env));
+  if (resolveOrchestratorBackend(config) === "cloud") {
+    const cloudBase = resolveCloudBaseConfig(config, { env });
+    checks.push({
+      name: "cloud-base-endpoint",
+      ok: Boolean(cloudBase.endpoint),
+      detail: cloudBase.endpoint || "orchestrator.backend=cloud requires cloudBase.endpoint",
+    });
+    const mode = fileMode(cloudBase.tokenFile);
+    checks.push({
+      name: "cloud-base-token",
+      ok: mode === "0600",
+      detail: mode ? `${cloudBase.tokenFile} mode ${mode}` : `must exist at ${cloudBase.tokenFile}`,
+    });
+  } else {
+    checks.push(commandCheck("orchestrator", config.orchestrator?.command?.[0], env));
+  }
   if (config.imessage?.receive?.backend === "command") {
     checks.push(commandCheck("message-receive", config.imessage.receive.command?.argv?.[0], env));
   }

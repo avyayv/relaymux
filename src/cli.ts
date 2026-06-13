@@ -9,6 +9,7 @@ import { collectDoctorChecks } from "./doctor.js";
 import { defaultConfigPath, loadConfig, resolveLogDir, resolveStateDir, writeConfig, writeDefaultConfig } from "./config.js";
 import { runDaemon } from "./daemon.js";
 import { getLaunchAgentStatus, installLaunchAgent, launchAgentPath, printLaunchAgentStatus, restartLaunchAgent, uninstallLaunchAgent } from "./launch-agent.js";
+import { handleHandsCommand } from "./hands.js";
 import { handleNotify } from "./notify.js";
 import { webhookConfig, webhookStatus } from "./webhook.js";
 import { expandPath, ensureDirectory, pathExists, readTextFile } from "./paths.js";
@@ -61,6 +62,8 @@ export async function main(argv, io = defaultIo()) {
       case "ask":
       case "request":
         return handleAsk(parsed.flags, parsed.positionals, configInfo, io);
+      case "hands":
+        return await handleHandsCommand({ flags: parsed.flags, positionals: parsed.positionals, configInfo, stateDir, io });
       case "daemon":
         return await runDaemon({ flags: parsed.flags, configInfo, stateDir, io });
       case "start-tmux":
@@ -858,6 +861,7 @@ Usage:
   relaymux uninstall-launch-agent
   relaymux launch --repo <path> --agent <name> --prompt <text|@file> [--name <name>]
   relaymux ask <text> [--no-wait] [--reply-mode imessage|none]
+  relaymux hands <status|run|serve-dev|enqueue> [options]
   relaymux status [--json] [--session <name>]
   relaymux notify [--run-id <id>] [--reply-mode imessage|none] [--message <text>]
   relaymux migrate-home [--dry-run] [--apply] [--symlink]
@@ -904,6 +908,14 @@ Request/notify/status options:
   --idempotency-key <key>    For notify: suppress duplicate completion webhook retries
   --metadata-json <json>     For notify: optional metadata object
   --history                  For status: include old run records whose tmux tabs are gone
+
+Cloud-base/local-hands options:
+  relaymux hands help        Show worker, dev-server, and task enqueue usage
+  --endpoint <url>           Cloud/dev endpoint for hands worker or enqueue client
+  --token-file <path>        Token file used to authenticate to the cloud/dev endpoint
+  --workspace <name=path>    Worker allowlisted workspace root; for enqueue, workspace name
+  --allow-write              Worker may execute write-file tasks inside the workspace
+  --allow-shell              Worker may execute shell tasks inside the workspace
 
 Useful commands:
   tmux attach -t <session>       attach to the shared or named agent session

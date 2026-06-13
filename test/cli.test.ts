@@ -154,6 +154,31 @@ test("launch dry-run honors explicit session grouping", async () => {
   assert.match(harness.stdout, /# tmux session: task-group \(explicit; --session\)/);
 });
 
+test("cloud hands defaults do not change local launch dry-run", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-repo-"));
+  const harness = makeIo();
+  const code = await main([
+    "--config",
+    writeTempConfig("launch-cloud-defaults"),
+    "launch",
+    "--repo",
+    dir,
+    "--agent",
+    "custom",
+    "--name",
+    "api-fix",
+    "--prompt",
+    "noop",
+    "--dry-run",
+  ], harness.io);
+
+  assert.equal(code, 0);
+  assert.match(harness.stdout, /# tmux session: agents/);
+  assert.match(harness.stdout, /# wrapper script/);
+  assert.doesNotMatch(harness.stdout, /cloudBase/);
+  assert.doesNotMatch(harness.stdout, /cloudHands/);
+});
+
 test("install-launch-agent dry-run runs the daemon directly by default", async () => {
   const harness = makeIo();
   const code = await main([

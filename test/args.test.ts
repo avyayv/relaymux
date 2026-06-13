@@ -35,3 +35,16 @@ test("parseArgv supports global flags before the command", () => {
     config: "relaymux.json",
   });
 });
+
+test("parseArgv recognizes hands safety booleans", () => {
+  const parsed = parseArgv(["hands", "run", "--workspace", "app=/repo", "--allow-write", "--allow-shell", "--read-only"]);
+
+  assert.equal(parsed.command, "hands");
+  assert.deepEqual(parsed.positionals, ["run"]);
+  assert.deepEqual(parsed.flags, {
+    workspace: "app=/repo",
+    allowWrite: true,
+    allowShell: true,
+    readOnly: true,
+  });
+});

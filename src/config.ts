@@ -58,6 +58,7 @@ export function defaultConfig(env = process.env) {
     },
     orchestrator: {
       description: "Pi orchestrator command. Use a non-interactive Pi invocation if your pi binary supports one.",
+      backend: "local",
       cwd: "~",
       command: ["pi", "{prompt}"],
       promptMode: "arg",
@@ -65,6 +66,29 @@ export function defaultConfig(env = process.env) {
       maxBufferBytes: 10 * 1024 * 1024,
       systemPromptFile: "",
       extraSystemPrompt: "",
+    },
+    cloudBase: {
+      enabled: false,
+      endpoint: "",
+      tokenFile: path.posix.join(stateDir, "cloud-base-token"),
+      sessionId: "default",
+      timeoutMs: 0,
+    },
+    cloudHands: {
+      enabled: false,
+      endpoint: "",
+      tokenFile: path.posix.join(stateDir, "hands-token"),
+      workerId: "",
+      pollMs: 2000,
+      leaseMs: 60000,
+      requestTimeoutMs: 30000,
+      maxCommandOutputBytes: 200000,
+      workspaces: [],
+      devServer: {
+        host: "127.0.0.1",
+        port: 47773,
+        stateFile: path.posix.join(stateDir, "hands-dev-server.json"),
+      },
     },
     agents: {
       pi: {
@@ -187,6 +211,19 @@ function normalizeConfig(config, override) {
     }
     if (!hasOwnPath(override, ["daemon", "logDir"])) {
       config.daemon.logDir = path.posix.join(String(override.stateDir), "logs");
+    }
+    if (!hasOwnPath(override, ["cloudBase", "tokenFile"])) {
+      config.cloudBase = config.cloudBase || {};
+      config.cloudBase.tokenFile = path.posix.join(String(override.stateDir), "cloud-base-token");
+    }
+    if (!hasOwnPath(override, ["cloudHands", "tokenFile"])) {
+      config.cloudHands = config.cloudHands || {};
+      config.cloudHands.tokenFile = path.posix.join(String(override.stateDir), "hands-token");
+    }
+    if (!hasOwnPath(override, ["cloudHands", "devServer", "stateFile"])) {
+      config.cloudHands = config.cloudHands || {};
+      config.cloudHands.devServer = config.cloudHands.devServer || {};
+      config.cloudHands.devServer.stateFile = path.posix.join(String(override.stateDir), "hands-dev-server.json");
     }
   }
 
