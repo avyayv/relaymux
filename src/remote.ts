@@ -6,6 +6,8 @@ import path from "node:path";
 
 import { ensureDirectory } from "./paths.js";
 
+const DEFAULT_HTTP_JSON_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+
 export function ensureTokenFile(tokenFile) {
   ensureDirectory(path.dirname(tokenFile));
   try {
@@ -30,7 +32,7 @@ export function readTokenFile(tokenFile) {
   return token;
 }
 
-export async function httpJson({ endpoint, path: requestPath, method = "POST", token, body, timeoutMs = 0 }) {
+export async function httpJson({ endpoint, path: requestPath, method = "POST", token, body, timeoutMs = 0, maxResponseBytes = DEFAULT_HTTP_JSON_MAX_RESPONSE_BYTES }) {
   const base = new URL(endpoint.endsWith("/") ? endpoint : `${endpoint}/`);
   if (!["http:", "https:"].includes(base.protocol)) {
     throw new Error(`Unsupported endpoint protocol ${base.protocol}; use http or https`);
@@ -58,8 +60,21 @@ export async function httpJson({ endpoint, path: requestPath, method = "POST", t
       headers,
     }, (res) => {
       const chunks = [];
-      res.on("data", (chunk) => chunks.push(chunk));
+      let bytes = 0;
+      let tooLarge = false;
+      res.on("data", (chunk) => {
+        bytes += chunk.length;
+        if (bytes > maxResponseBytes) {
+          tooLarge = true;
+          return;
+        }
+        chunks.push(chunk);
+      });
       res.on("end", () => {
+        if (tooLarge) {
+          reject(new Error(`remote JSON response exceeds ${maxResponseBytes} bytes`));
+          return;
+        }
         const raw = Buffer.concat(chunks).toString("utf8");
         let parsed: any = {};
         try {

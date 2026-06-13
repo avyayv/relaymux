@@ -276,6 +276,9 @@ export async function executeHandsTask(task, runtime) {
       const target = resolveWorkspacePath(runtime.workspaces, normalized.workspace, normalized.args.path, "read");
       const stat = fs.statSync(target.realPath);
       if (!stat.isFile()) throw new Error("readFile target must be a file");
+      if (stat.size > runtime.maxCommandOutputBytes) {
+        throw new Error(`readFile target exceeds maxCommandOutputBytes (${runtime.maxCommandOutputBytes})`);
+      }
       const text = fs.readFileSync(target.realPath, "utf8");
       return taskResult(true, normalized, startedAt, { path: target.relativePath, bytes: Buffer.byteLength(text), text });
     }
@@ -283,10 +286,14 @@ export async function executeHandsTask(task, runtime) {
     if (normalized.kind === "writeFile") {
       const target = resolveWorkspacePath(runtime.workspaces, normalized.workspace, normalized.args.path, "write");
       const content = String(normalized.args.content ?? "");
+      const bytes = Buffer.byteLength(content);
+      if (bytes > runtime.maxCommandOutputBytes) {
+        throw new Error(`writeFile content exceeds maxCommandOutputBytes (${runtime.maxCommandOutputBytes})`);
+      }
       ensureDirectory(path.dirname(target.absPath));
       if (normalized.args.append) fs.appendFileSync(target.absPath, content);
       else fs.writeFileSync(target.absPath, content);
-      return taskResult(true, normalized, startedAt, { path: target.relativePath, bytes: Buffer.byteLength(content) });
+      return taskResult(true, normalized, startedAt, { path: target.relativePath, bytes });
     }
 
     if (normalized.kind === "listDir") {

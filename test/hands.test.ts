@@ -40,6 +40,11 @@ test("hands workspace paths are scoped under the allowlisted root", async () => 
   assert.equal(read.ok, true);
   assert.equal(read.text, "hello");
 
+  const smallLimitRuntime: any = { ...runtime, maxCommandOutputBytes: 3 };
+  const readTooLarge = await executeHandsTask({ id: "t1b", kind: "readFile", workspace: "app", args: { path: "note.txt" } }, smallLimitRuntime);
+  assert.equal(readTooLarge.ok, false);
+  assert.match(readTooLarge.error, /maxCommandOutputBytes/);
+
   assert.throws(() => resolveWorkspacePath(runtime.workspaces, "app", "../outside.txt", "read"), /escapes workspace|ENOENT/);
 
   const shell = await executeHandsTask({ id: "t2", kind: "shell", workspace: "app", args: { command: "pwd" } }, runtime);
@@ -54,6 +59,10 @@ test("hands workspace paths are scoped under the allowlisted root", async () => 
   const writeAllowed = await executeHandsTask({ id: "t4", kind: "writeFile", workspace: "app", args: { path: "nested/new.txt", content: "x" } }, writeRuntime);
   assert.equal(writeAllowed.ok, true);
   assert.equal(fs.readFileSync(path.join(root, "nested", "new.txt"), "utf8"), "x");
+
+  const writeTooLarge = await executeHandsTask({ id: "t5", kind: "writeFile", workspace: "app", args: { path: "nested/huge.txt", content: "abcd" } }, { ...writeRuntime, maxCommandOutputBytes: 3 });
+  assert.equal(writeTooLarge.ok, false);
+  assert.match(writeTooLarge.error, /maxCommandOutputBytes/);
 });
 
 test("hands dev server leases tasks, accepts local results, and persists status", async () => {
