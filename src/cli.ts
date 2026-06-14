@@ -9,7 +9,7 @@ import { assertNoFatalCommandFindings } from "./command-validation.js";
 import { collectDoctorChecks } from "./doctor.js";
 import { defaultConfig, defaultConfigPath, isIntegrationEnabled, loadConfig, resolveLogDir, resolveStateDir, writeConfig } from "./config.js";
 import { runDaemon } from "./daemon.js";
-import { getLaunchAgentStatus, installLaunchAgent, launchAgentPath, printLaunchAgentStatus, restartLaunchAgent, uninstallLaunchAgent } from "./launch-agent.js";
+import { getLaunchAgentStatus, getLaunchAgentWatchdogStatus, installLaunchAgent, launchAgentPath, printLaunchAgentStatus, restartLaunchAgent, uninstallLaunchAgent } from "./launch-agent.js";
 import { handleNotify } from "./notify.js";
 import { webhookConfig, webhookStatus } from "./webhook.js";
 import { expandPath, ensureDirectory, pathExists, readTextFile } from "./paths.js";
@@ -687,7 +687,13 @@ function handleStatus(flags, configInfo, stateDir, io) {
       : `LaunchAgent ${launchAgent.label} not loaded`
     : `LaunchAgent unsupported on ${process.platform}`;
   io.stdout.write(`Home: ${daemon.homeDir}; config ${daemon.configPath}; state ${daemon.stateDir}; logs ${daemon.logDir}\n`);
-  io.stdout.write(`Background service: ${daemon.enabled ? "enabled" : "disabled"}; mode ${daemon.launchMode}/background (no tmux); ${launchAgentText}; webhook ${daemon.webhook.endpoints.message}; token ${daemon.webhook.tokenFileExists ? daemon.webhook.tokenFileMode : "missing"}\n`);
+  const watchdog: any = daemon.launchAgentWatchdog;
+  const watchdogText = watchdog?.enabled
+    ? watchdog.loaded
+      ? `watchdog ${watchdog.label} loaded every ${watchdog.intervalSeconds}s`
+      : `watchdog ${watchdog.label} not loaded`
+    : "watchdog disabled";
+  io.stdout.write(`Background service: ${daemon.enabled ? "enabled" : "disabled"}; mode ${daemon.launchMode}/background (no tmux); ${launchAgentText}; ${watchdogText}; webhook ${daemon.webhook.endpoints.message}; token ${daemon.webhook.tokenFileExists ? daemon.webhook.tokenFileMode : "missing"}\n`);
   io.stdout.write(`Agent tmux: session mode ${daemon.agentSessionMode}; ${session ? `filter session ${session}` : "showing all relaymux-managed sessions"}; tabs are tmux windows, never panes/splits.\n`);
 
   if (rows.length === 0) {
@@ -713,6 +719,7 @@ function daemonStatus(config, configPath, env = process.env) {
     webhook: webhookStatus(config),
     launchAgentPath: launchAgentPath(config),
     launchAgent: getLaunchAgentStatus(config),
+    launchAgentWatchdog: getLaunchAgentWatchdogStatus(config),
   };
 }
 
@@ -912,8 +919,8 @@ Usage:
   relaymux init [--force] [--config <path>]
   relaymux init --imsg [--chat-id <id>] [--install-launch-agent]
   relaymux init --telegram [--telegram-chat-id <id>] [--install-launch-agent]
-  relaymux install-launch-agent [--dry-run] [--no-load]
-  relaymux restart-launch-agent [--dry-run] [--no-load]
+  relaymux install-launch-agent [--dry-run] [--no-load] [--no-watchdog]
+  relaymux restart-launch-agent [--dry-run] [--no-load] [--no-watchdog]
   relaymux status-launch-agent [--json]
   relaymux uninstall-launch-agent
   relaymux launch --repo <path> --agent <name> --prompt <text|@file> [--name <name>] [--notify-on-exit never|failure|always]
@@ -963,6 +970,7 @@ Launch options:
 
 Background service options:
   --no-load                  Write the LaunchAgent plist without loading it
+  --no-watchdog              Skip installing the periodic LaunchAgent health watchdog
   --keep-tmux-daemon         During migration, do not stop an old relaymux-daemon tmux tab
 
 Request/notify/status options:

@@ -79,6 +79,10 @@ export function defaultConfig(env = process.env) {
       launchMode: "direct",
       supervisorPollMs: 15000,
       selfRestartDelayMs: 30000,
+      watchdog: {
+        enabled: true,
+        intervalSeconds: 60,
+      },
       logDir,
     },
     orchestrator: {

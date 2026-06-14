@@ -5,7 +5,7 @@ import path from "node:path";
 import { defaultConfigPath, getIntegration, isIntegrationEnabled, legacyDefaultConfigPath, resolveLogDir, resolveStateDir } from "./config.js";
 import { validateConfiguredAgentCommand } from "./command-validation.js";
 import { runCommand } from "./process.js";
-import { getLaunchAgentStatus, launchAgentPath } from "./launch-agent.js";
+import { getLaunchAgentStatus, getLaunchAgentWatchdogStatus, launchAgentPath, launchAgentWatchdogPath } from "./launch-agent.js";
 import { defaultRelaymuxHome } from "./paths.js";
 import { webhookStatus } from "./webhook.js";
 
@@ -124,6 +124,18 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
         : `direct/background LaunchAgent unsupported on ${process.platform}: ${launchAgentPath(config)}`
       : "disabled in config",
   });
+
+  const watchdog: any = getLaunchAgentWatchdogStatus(config);
+  if (daemonEnabled && watchdog.enabled) {
+    checks.push({
+      name: "background-watchdog",
+      ok: !watchdog.supported || watchdog.loaded,
+      fatal: false,
+      detail: watchdog.supported
+        ? `watchdog LaunchAgent ${watchdog.loaded ? "loaded" : "not loaded"}: ${launchAgentWatchdogPath(config)}; interval ${watchdog.intervalSeconds}s`
+        : `watchdog LaunchAgent unsupported on ${process.platform}: ${launchAgentWatchdogPath(config)}`,
+    });
+  }
 
   for (const [name, agent] of Object.entries((config.agents ?? {}) as Record<string, any>)) {
     const command = Array.isArray(agent.command) ? agent.command[0] : "";

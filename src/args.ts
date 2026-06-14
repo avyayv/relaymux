@@ -22,6 +22,7 @@ const BOOLEAN_FLAGS = new Set([
   "telegram",
   "version",
   "wait",
+  "watchdog",
 ]);
 
 export function parseArgv(argv) {

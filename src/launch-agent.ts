@@ -13,13 +13,23 @@ export function launchAgentPath(config) {
   return path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`);
 }
 
+export function launchAgentWatchdogPath(config) {
+  const label = launchAgentWatchdogLabel(config);
+  return path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`);
+}
+
 export function launchAgentLabel(config) {
   return config.daemon?.launchAgentLabel || "com.relaymux.daemon";
 }
 
-export function renderLaunchAgentPlist({ label, programArguments, workingDirectory, standardOutPath, standardErrorPath, environment = {}, keepAlive = true }) {
+export function launchAgentWatchdogLabel(config) {
+  return `${launchAgentLabel(config)}.watchdog`;
+}
+
+export function renderLaunchAgentPlist({ label, programArguments, workingDirectory, standardOutPath, standardErrorPath, environment = {}, keepAlive = true, startInterval = 0 }) {
   const args = programArguments.map((arg) => `    <string>${xmlEscape(arg)}</string>`).join("\n");
   const env = renderEnvironment(environment);
+  const interval = renderStartInterval(startInterval);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -35,7 +45,7 @@ ${args}
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
-  ${keepAlive ? "<true/>" : "<false/>"}
+  ${keepAlive ? "<true/>" : "<false/>"}${interval}
   <key>StandardOutPath</key>
   <string>${xmlEscape(standardOutPath)}</string>
   <key>StandardErrorPath</key>
@@ -82,6 +92,16 @@ export function installLaunchAgent({ flags, configInfo, binPath, io }) {
   io.stdout.write(`Wrote ${plistPath}\n`);
   io.stdout.write(`LaunchAgent ${label} mode: ${launchMode}/background (no tmux)\n`);
 
+  if (shouldInstallWatchdog(config, flags)) {
+    installLaunchAgentWatchdog({
+      config,
+      configPath: configInfo.path,
+      binPath,
+      io,
+      load: flags.load !== false,
+    });
+  }
+
   if (flags.load !== false) {
     const target = launchAgentTarget(config);
     if (process.platform === "darwin" && isCurrentLaunchAgent(config, process.env) && flags.immediateSelfRestart !== true) {
@@ -90,6 +110,7 @@ export function installLaunchAgent({ flags, configInfo, binPath, io }) {
     }
 
     runCommand("launchctl", ["bootout", target], { allowFailure: true });
+    runCommand("/bin/sleep", ["1"], { allowFailure: true });
     if (process.platform === "darwin" && launchMode === "direct" && flags.keepTmuxDaemon !== true) {
       const windowName = String(flags.windowName || "relaymux-daemon");
       try {
@@ -101,15 +122,66 @@ export function installLaunchAgent({ flags, configInfo, binPath, io }) {
         io.stderr.write(`relaymux: skipped old tmux daemon cleanup: ${error.message}\n`);
       }
     }
-    runCommand("launchctl", ["enable", target], { allowFailure: true });
-    const result = runCommand("launchctl", ["bootstrap", launchAgentDomain(), plistPath], { allowFailure: true });
+    const result = loadLaunchAgentTarget({ target, domain: launchAgentDomain(), plistPath });
     if (result.status !== 0) {
-      io.stderr.write(`launchctl bootstrap did not complete (${result.status}); you can load manually with launchctl bootstrap ${launchAgentDomain()} ${plistPath}\n`);
-    } else {
-      runCommand("launchctl", ["kickstart", "-k", target], { allowFailure: true });
+      io.stderr.write(`launchctl bootstrap did not complete (${result.status}); watchdog will retry, or load manually with launchctl bootstrap ${launchAgentDomain()} ${plistPath}\n`);
     }
   }
   return plistPath;
+}
+
+export function installLaunchAgentWatchdog({ config, configPath, binPath, io, load = true }) {
+  if (process.platform !== "darwin") {
+    return null;
+  }
+
+  const scriptPath = launchAgentWatchdogScriptPath(config);
+  const plistPath = launchAgentWatchdogPath(config);
+  const logDir = resolveLogDir(config);
+  const scriptSourcePath = resolveWatchdogSourcePath(binPath);
+  const script = fs.readFileSync(scriptSourcePath, "utf8");
+  ensureDirectory(path.dirname(scriptPath));
+  ensureDirectory(path.dirname(plistPath));
+  ensureDirectory(logDir);
+  fs.writeFileSync(scriptPath, script, { mode: 0o755 });
+  try { fs.chmodSync(scriptPath, 0o755); } catch {}
+
+  const plist = renderLaunchAgentWatchdogPlist({ config, configPath, scriptPath });
+  fs.writeFileSync(plistPath, plist, { mode: 0o644 });
+  io.stdout.write(`Wrote ${plistPath}\n`);
+
+  if (load) {
+    const target = launchAgentWatchdogTarget(config);
+    const result = loadLaunchAgentTarget({ target, domain: launchAgentDomain(), plistPath });
+    if (result.status !== 0) {
+      io.stderr.write(`watchdog bootstrap did not complete (${result.status}); you can load manually with launchctl bootstrap ${launchAgentDomain()} ${plistPath}\n`);
+    }
+  }
+
+  return { plistPath, scriptPath };
+}
+
+export function renderLaunchAgentWatchdogPlist({ config, configPath, scriptPath }) {
+  const logDir = resolveLogDir(config);
+  const label = launchAgentWatchdogLabel(config);
+  return renderLaunchAgentPlist({
+    label,
+    programArguments: ["/bin/sh", scriptPath],
+    workingDirectory: os.homedir(),
+    environment: {
+      PATH: defaultLaunchPath(),
+      HOME: os.homedir(),
+      RELAYMUX_CONFIG: configPath,
+      RELAYMUX_MAIN_LABEL: launchAgentLabel(config),
+      RELAYMUX_MAIN_PLIST: launchAgentPath(config),
+      RELAYMUX_HEALTH_URL: launchAgentHealthUrl(config),
+      RELAYMUX_WATCHDOG_LOG: path.join(logDir, "launch-agent-watchdog.log"),
+    },
+    standardOutPath: path.join(logDir, "launch-agent-watchdog.out.log"),
+    standardErrorPath: path.join(logDir, "launch-agent-watchdog.err.log"),
+    keepAlive: false,
+    startInterval: launchAgentWatchdogIntervalSeconds(config),
+  });
 }
 
 export function stopLaunchAgent({ config, io }) {
@@ -139,9 +211,11 @@ export function restartLaunchAgent({ flags, configInfo, binPath, io }) {
 
 export function printLaunchAgentStatus({ config, io, json = false }) {
   const status: any = getLaunchAgentStatus(config);
+  const watchdog: any = getLaunchAgentWatchdogStatus(config);
   if (json) {
-    io.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
-    return status;
+    const payload = { ...status, watchdog };
+    io.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return payload;
   }
 
   if (!status.supported) {
@@ -158,14 +232,38 @@ export function printLaunchAgentStatus({ config, io, json = false }) {
   const pidText = status.pid ? ` pid=${status.pid}` : "";
   const exitText = status.lastExitCode ? ` lastExit=${status.lastExitCode}` : "";
   io.stdout.write(`LaunchAgent ${status.label}: direct/background (no tmux) loaded state=${status.state || "unknown"}${pidText}${exitText}; plist ${status.plistPath}\n`);
+  if (watchdog.enabled) {
+    const watchdogText = watchdog.loaded
+      ? `loaded state=${watchdog.state || "unknown"}${watchdog.pid ? ` pid=${watchdog.pid}` : ""}`
+      : `not loaded${watchdog.detail ? ` (${watchdog.detail})` : ""}`;
+    io.stdout.write(`Watchdog ${watchdog.label}: interval=${watchdog.intervalSeconds}s ${watchdogText}; plist ${watchdog.plistPath}; script ${watchdog.scriptPath}\n`);
+  }
   return status;
 }
 
 export function getLaunchAgentStatus(config) {
-  const label = launchAgentLabel(config);
-  const plistPath = launchAgentPath(config);
+  return getLaunchAgentStatusFor({
+    label: launchAgentLabel(config),
+    plistPath: launchAgentPath(config),
+    target: launchAgentTarget(config),
+  });
+}
+
+export function getLaunchAgentWatchdogStatus(config) {
+  return {
+    ...getLaunchAgentStatusFor({
+      label: launchAgentWatchdogLabel(config),
+      plistPath: launchAgentWatchdogPath(config),
+      target: launchAgentWatchdogTarget(config),
+    }),
+    enabled: shouldInstallWatchdog(config, {}),
+    intervalSeconds: launchAgentWatchdogIntervalSeconds(config),
+    scriptPath: launchAgentWatchdogScriptPath(config),
+  };
+}
+
+function getLaunchAgentStatusFor({ label, plistPath, target }) {
   const plistExists = fs.existsSync(plistPath);
-  const target = launchAgentTarget(config);
   const base = { label, plistPath, plistExists, target, supported: process.platform === "darwin", mode: "direct", background: true };
   if (!base.supported) {
     return { ...base, loaded: false, running: false, state: "unsupported" };
@@ -192,6 +290,19 @@ export function getLaunchAgentStatus(config) {
 }
 
 export function uninstallLaunchAgent({ config, io }) {
+  const watchdogPlistPath = launchAgentWatchdogPath(config);
+  if (fs.existsSync(watchdogPlistPath)) {
+    runCommand("launchctl", ["bootout", launchAgentWatchdogTarget(config)], { allowFailure: true });
+    fs.unlinkSync(watchdogPlistPath);
+    io.stdout.write(`Removed ${watchdogPlistPath}\n`);
+  }
+
+  const watchdogScriptPath = launchAgentWatchdogScriptPath(config);
+  if (fs.existsSync(watchdogScriptPath)) {
+    fs.unlinkSync(watchdogScriptPath);
+    io.stdout.write(`Removed ${watchdogScriptPath}\n`);
+  }
+
   const plistPath = launchAgentPath(config);
   if (fs.existsSync(plistPath)) {
     runCommand("launchctl", ["bootout", launchAgentTarget(config)], { allowFailure: true });
@@ -288,8 +399,82 @@ export function launchAgentTarget(config) {
   return `${launchAgentDomain()}/${launchAgentLabel(config)}`;
 }
 
+export function launchAgentWatchdogTarget(config) {
+  return `${launchAgentDomain()}/${launchAgentWatchdogLabel(config)}`;
+}
+
+export function shouldInstallWatchdog(config, flags: any = {}) {
+  if (flags.watchdog === false) return false;
+  if (config.daemon?.enabled === false) return false;
+  if (config.daemon?.watchdog?.enabled === false) return false;
+  return true;
+}
+
+export function launchAgentWatchdogScriptPath(config) {
+  const logDir = resolveLogDir(config);
+  const relaymuxHome = path.dirname(logDir);
+  return path.join(relaymuxHome, "bin", `${launchAgentLabel(config)}-watchdog.sh`);
+}
+
+export function launchAgentWatchdogIntervalSeconds(config) {
+  const raw = config.daemon?.watchdog?.intervalSeconds ?? config.daemon?.watchdogIntervalSeconds ?? 60;
+  const interval = Number(raw);
+  if (!Number.isFinite(interval) || interval <= 0) return 60;
+  return Math.max(15, Math.floor(interval));
+}
+
+export function resolveWatchdogSourcePath(binPath) {
+  const candidates = [
+    path.resolve(path.dirname(binPath || ""), "..", "..", "scripts", "relaymux-launch-agent-watchdog.sh"),
+    path.resolve(process.cwd(), "scripts", "relaymux-launch-agent-watchdog.sh"),
+  ];
+  const found = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!found) {
+    throw new Error(`Could not find relaymux watchdog script. Checked: ${candidates.join(", ")}`);
+  }
+  return found;
+}
+
 function buildDirectDaemonArgs({ binPath, configPath }) {
-  return [process.execPath, binPath, "--config", configPath, "daemon"];
+  return [stableNodePath(), binPath, "--config", configPath, "daemon"];
+}
+
+function loadLaunchAgentTarget({ target, domain, plistPath }) {
+  let result: any = { status: 1, stdout: "", stderr: "" };
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    runCommand("launchctl", ["enable", target], { allowFailure: true });
+    result = runCommand("launchctl", ["bootstrap", domain, plistPath], { allowFailure: true });
+    if (result.status === 0) {
+      runCommand("launchctl", ["kickstart", "-k", target], { allowFailure: true });
+      return result;
+    }
+    runCommand("launchctl", ["bootout", target], { allowFailure: true });
+    runCommand("/bin/sleep", [String(attempt)], { allowFailure: true });
+  }
+  return result;
+}
+
+function stableNodePath() {
+  for (const candidate of ["/opt/homebrew/bin/node", "/usr/local/bin/node", process.execPath]) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return process.execPath;
+}
+
+function launchAgentHealthUrl(config) {
+  const host = formatHostForUrl(config.daemon?.host || "127.0.0.1");
+  const port = Number(config.daemon?.port || 47761);
+  return `http://${host}:${port}/health`;
+}
+
+function formatHostForUrl(host) {
+  const value = String(host || "").trim();
+  return value.includes(":") && !value.startsWith("[") ? `[${value}]` : value;
 }
 
 function resolveLaunchMode(flags, config) {
@@ -332,6 +517,12 @@ function defaultLaunchPath() {
     "/sbin",
   ];
   return pathParts.join(":");
+}
+
+function renderStartInterval(startInterval) {
+  const interval = Number(startInterval || 0);
+  if (!Number.isFinite(interval) || interval <= 0) return "";
+  return `\n  <key>StartInterval</key>\n  <integer>${Math.floor(interval)}</integer>`;
 }
 
 function renderEnvironment(environment) {

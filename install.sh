@@ -79,7 +79,7 @@ npm run build
 
 rm -rf "$install_dir"
 mkdir -p "$install_dir" "$bin_dir"
-cp -R dist package.json README.md LICENSE examples "$install_dir/"
+cp -R dist package.json README.md LICENSE examples scripts "$install_dir/"
 
 cat > "$bin_dir/relaymux" <<SHIM
 #!/usr/bin/env sh

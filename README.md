@@ -214,6 +214,10 @@ relaymux notify \
     "port": 47761,
     "tokenFile": "~/.relaymux/state/webhook-token",
     "launchAgentLabel": "com.relaymux.daemon",
+    "watchdog": {
+      "enabled": true,
+      "intervalSeconds": 60
+    },
     "logDir": "~/.relaymux/logs"
   },
   "integrations": {},
@@ -322,8 +326,11 @@ Manage the background service:
 
 ```bash
 relaymux restart-launch-agent
+relaymux status-launch-agent
 relaymux uninstall-launch-agent
 ```
+
+`restart-launch-agent` writes two LaunchAgents on macOS: the main relaymux daemon and a small watchdog. The watchdog runs once a minute, checks the daemon's launchd state plus `/health` on the local API, and bootstraps/kickstarts the daemon if it was killed or left unloaded. Use `--no-watchdog` only when you intentionally want to manage recovery yourself.
 
 ## Safety model and limitations
 
@@ -341,6 +348,8 @@ If setup says the LaunchAgent is not loaded, reload it from a normal terminal:
 relaymux restart-launch-agent
 relaymux status-launch-agent
 ```
+
+A healthy install should show both the main LaunchAgent and `Watchdog ... loaded`. The checked-in watchdog script is copied to `~/.relaymux/bin/<launch-agent-label>-watchdog.sh`, and its plist lives at `~/Library/LaunchAgents/<launch-agent-label>.watchdog.plist`. Watchdog activity is logged under `~/.relaymux/logs/launch-agent-watchdog.log`.
 
 If iMessage/SMS send/receive fails, verify your `imsg` CLI first:
 
