@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { defaultConfig } from "../src/config.js";
 import {
+  formatLaunchAgentLoadFailure,
   installLaunchAgent,
   isCurrentLaunchAgent,
   parseLaunchCtlPrint,
@@ -170,4 +171,24 @@ test("parseLaunchCtlPrint extracts running status", () => {
   assert.equal(status.state, "running");
   assert.equal(status.pid, 1234);
   assert.equal(status.lastExitCode, "0");
+});
+
+test("formatLaunchAgentLoadFailure includes actionable launchctl context", () => {
+  const text = formatLaunchAgentLoadFailure({
+    label: "com.example.relaymux",
+    result: { status: 5, stdout: "", stderr: "Bootstrap failed: 5: Bad request.\n" },
+    domain: "gui/501",
+    target: "gui/501/com.example.relaymux",
+    plistPath: "/Users/example/Library/LaunchAgents/com.example.relaymux.plist",
+    logDir: "/Users/example/.relaymux/logs",
+    stdoutLog: "/Users/example/.relaymux/logs/daemon.out.log",
+    stderrLog: "/Users/example/.relaymux/logs/daemon.err.log",
+  });
+
+  assert.match(text, /Bad request/);
+  assert.match(text, /plist: \/Users\/example\/Library\/LaunchAgents\/com\.example\.relaymux\.plist/);
+  assert.match(text, /daemon\.out\.log/);
+  assert.match(text, /launchctl print gui\/501\/com\.example\.relaymux/);
+  assert.match(text, /common causes/);
+  assert.match(text, /relaymux restart-launch-agent/);
 });

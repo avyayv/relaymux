@@ -115,12 +115,17 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
   });
   const launchAgent: any = getLaunchAgentStatus(config);
   const daemonEnabled = config.daemon?.enabled !== false;
+  const logDir = resolveLogDir(config, env);
   checks.push({
     name: "background-service",
     ok: !daemonEnabled || !launchAgent.supported || launchAgent.loaded,
+    fatal: false,
+    severity: launchAgent.loaded || !daemonEnabled ? undefined : "warning",
     detail: daemonEnabled
       ? launchAgent.supported
-        ? `direct/background LaunchAgent ${launchAgent.loaded ? "loaded" : "not loaded"}: ${launchAgentPath(config)}${launchAgent.detail ? ` (${launchAgent.detail})` : ""}`
+        ? launchAgent.loaded
+          ? `direct/background LaunchAgent loaded: ${launchAgentPath(config)}${launchAgent.detail ? ` (${launchAgent.detail})` : ""}`
+          : `direct/background LaunchAgent not loaded: ${launchAgentPath(config)}${launchAgent.detail ? ` (launchctl: ${launchAgent.detail})` : ""}; run relaymux restart-launch-agent; logs ${logDir}/daemon.out.log and ${logDir}/daemon.err.log; inspect launchctl print ${launchAgent.target}`
         : `direct/background LaunchAgent unsupported on ${process.platform}: ${launchAgentPath(config)}`
       : "disabled in config",
   });

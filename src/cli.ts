@@ -7,7 +7,7 @@ import { parseArgv } from "./args.js";
 import { buildAgentInvocation, buildTmuxShellCommand, buildTmuxShellScript, quoteArgv, renderTemplate, shellExportBlock } from "./command.js";
 import { assertNoFatalCommandFindings } from "./command-validation.js";
 import { collectDoctorChecks } from "./doctor.js";
-import { defaultConfig, defaultConfigPath, isIntegrationEnabled, loadConfig, resolveLogDir, resolveStateDir, writeConfig } from "./config.js";
+import { defaultConfig, defaultConfigPath, getIntegration, isIntegrationEnabled, loadConfig, resolveLogDir, resolveStateDir, writeConfig } from "./config.js";
 import { runDaemon } from "./daemon.js";
 import { getLaunchAgentStatus, getLaunchAgentWatchdogStatus, installLaunchAgent, launchAgentPath, printLaunchAgentStatus, restartLaunchAgent, uninstallLaunchAgent } from "./launch-agent.js";
 import { handleNotify } from "./notify.js";
@@ -95,39 +95,75 @@ export async function main(argv, io = defaultIo()) {
 }
 
 async function handleSetup(flags, io) {
+  const wantsImsg = Boolean(flags.imsg || flags.preset === "imsg");
+  const wantsTelegram = Boolean(flags.telegram || flags.preset === "telegram");
+  const wantsAdapter = wantsImsg || wantsTelegram;
   const configPath = flags.config || defaultConfigPath(io.env);
   let configInfo = loadConfig({ configPath: flags.config, env: io.env });
   const shouldInstallLaunchAgent = flags.launchAgent !== false;
 
-  if (!configInfo.exists || flags.force) {
+  if (flags.dryRun) {
+    io.stdout.write(`Would ${configInfo.exists ? "update" : "create"} config at ${configInfo.exists ? configInfo.path : configPath}\n`);
+    if (wantsImsg) {
+      const imessage = getIntegration(configInfo.config, "imessage");
+      if (!flags.chatId && !flags.recipient && !imessage.chatId) {
+        io.stdout.write("Would prompt for iMessage/SMS chat unless --chat-id <id> is provided.\n");
+      } else {
+        io.stdout.write("Would configure the iMessage/SMS adapter.\n");
+      }
+    }
+    if (wantsTelegram) io.stdout.write("Would configure the Telegram adapter.\n");
+    io.stdout.write(shouldInstallLaunchAgent
+      ? "Would install/restart the background LaunchAgent and watchdog.\n"
+      : "Would skip LaunchAgent installation because --no-launch-agent was passed.\n");
+    return 0;
+  }
+
+  if (!configInfo.exists || flags.force || wantsAdapter) {
     await handleInit({
       ...flags,
-      installLaunchAgent: shouldInstallLaunchAgent,
+      installLaunchAgent: false,
     }, io);
-    configInfo = loadConfig({ configPath, env: io.env });
+    configInfo = loadConfig({ configPath: flags.config, env: io.env });
   } else {
     io.stdout.write(`Using existing config at ${configInfo.path}\n`);
     if (configInfo.usingLegacyDefault) {
       io.stdout.write("Tip: this is the legacy config path. Run `relaymux migrate-home --dry-run` to inventory a safe move into ~/.relaymux.\n");
     }
-    if (shouldInstallLaunchAgent) {
-      installLaunchAgent({
-        flags: { load: flags.load },
-        configInfo,
-        binPath: process.argv[1],
-        io,
-      });
-    }
+  }
+
+  if (shouldInstallLaunchAgent) {
+    restartLaunchAgent({
+      flags: { load: flags.load, watchdog: flags.watchdog },
+      configInfo,
+      binPath: process.argv[1],
+      io,
+    });
   }
 
   const status = handleDoctor(configInfo, io);
+  const launchAgent = getLaunchAgentStatus(configInfo.config);
+  if (shouldInstallLaunchAgent && flags.load !== false && launchAgent.supported && !launchAgent.loaded) {
+    io.stderr.write("Setup wrote the config, but the background LaunchAgent is not loaded. Review the LaunchAgent detail above and run `relaymux restart-launch-agent` after fixing it.\n");
+    return 1;
+  }
   if (status === 0) {
     io.stdout.write("Setup complete. relaymux is ready.\n");
+    io.stdout.write(`Config: ${configInfo.path}\n`);
+    io.stdout.write(`Logs: ${resolveLogDir(configInfo.config, io.env)}\n`);
     io.stdout.write("Next steps:\n");
     if (isIntegrationEnabled(configInfo.config, "imessage")) {
-      io.stdout.write("  1. Text the configured iMessage/SMS chat; relaymux should reply from the background LaunchAgent.\n");
+      if (shouldInstallLaunchAgent) {
+        io.stdout.write("  1. Text the configured iMessage/SMS chat; relaymux should reply from the background LaunchAgent.\n");
+      } else {
+        io.stdout.write("  1. Run `relaymux restart-launch-agent` when you are ready to receive iMessage/SMS requests in the background.\n");
+      }
     } else if (isIntegrationEnabled(configInfo.config, "telegram")) {
-      io.stdout.write("  1. Send a Telegram-mode request with `relaymux ask --reply-mode telegram <text>` after setting the bot token.\n");
+      if (shouldInstallLaunchAgent) {
+        io.stdout.write("  1. Send a Telegram-mode request with `relaymux ask --reply-mode telegram <text>` after setting the bot token.\n");
+      } else {
+        io.stdout.write("  1. Run `relaymux restart-launch-agent` when you are ready to deliver Telegram replies from the background service.\n");
+      }
     } else {
       io.stdout.write("  1. Use the local CLI/API path: `relaymux ask <text>` or `relaymux notify --reply-mode none ...`.\n");
     }
@@ -142,36 +178,65 @@ async function handleSetup(flags, io) {
 async function handleInit(flags, io) {
   const wantsImsg = Boolean(flags.imsg || flags.preset === "imsg");
   const wantsTelegram = Boolean(flags.telegram || flags.preset === "telegram");
+  const wantsAdapter = wantsImsg || wantsTelegram;
+  const existing = loadConfig({ configPath: flags.config, env: io.env });
+  const configPath = existing.exists ? existing.path : flags.config || defaultConfigPath(io.env);
   const labels = [];
   let config;
+  let updatedExisting = false;
 
-  if (wantsImsg) {
-    const chatId = await resolveImsgChatId(flags, io, io.env);
-    config = buildImsgConfig({
+  if (existing.exists && !flags.force && !wantsAdapter) {
+    throw new Error(`Config already exists at ${existing.path}. Use --force to overwrite.`);
+  }
+
+  if (existing.exists && !flags.force && wantsAdapter) {
+    config = cloneConfig(existing.config);
+    updatedExisting = true;
+  } else {
+    if (wantsImsg) {
+      const chatId = await resolveImsgChatId(flags, io, io.env);
+      config = buildImsgConfig({
+        ...initOptionsFromFlags(flags),
+        chatId,
+      }, io.env);
+      labels.push("iMessage/SMS adapter");
+    } else if (wantsTelegram) {
+      config = buildTelegramConfig(initTelegramOptionsFromFlags(flags), io.env);
+      labels.push("Telegram adapter");
+    } else {
+      config = defaultConfig(io.env);
+    }
+  }
+
+  if (updatedExisting && wantsImsg) {
+    const imessage = getIntegration(config, "imessage");
+    const chatId = flags.chatId || flags.recipient || imessage.chatId || await resolveImsgChatId(flags, io, io.env);
+    const imsgConfig = buildImsgConfig({
       ...initOptionsFromFlags(flags),
       chatId,
     }, io.env);
+    config.integrations = { ...(config.integrations || {}), imessage: imsgConfig.integrations.imessage };
+    config.launchNotifications = { ...(config.launchNotifications || {}), replyMode: "imessage" };
     labels.push("iMessage/SMS adapter");
-  } else if (wantsTelegram) {
-    config = buildTelegramConfig(initTelegramOptionsFromFlags(flags), io.env);
-    labels.push("Telegram adapter");
-  } else {
-    config = defaultConfig(io.env);
   }
 
   if (wantsTelegram && wantsImsg) {
     config = withTelegramIntegration(config, initTelegramOptionsFromFlags(flags));
     labels.push("Telegram adapter");
+  } else if (updatedExisting && wantsTelegram) {
+    config = withTelegramIntegration(config, initTelegramOptionsFromFlags(flags));
+    labels.push("Telegram adapter");
   }
 
-  const target = writeConfig(flags.config || defaultConfigPath(io.env), config, { force: Boolean(flags.force), env: io.env });
+  const target = writeConfig(configPath, config, { force: Boolean(flags.force) || updatedExisting, env: io.env });
   const homeDir = ensureRelaymuxHomeLayout(path.dirname(defaultConfigPath(io.env)));
-  io.stdout.write(`Created ${target}${labels.length ? ` with ${labels.join(" and ")} defaults` : " with core defaults"}\n`);
+  io.stdout.write(`${updatedExisting ? "Updated" : "Created"} ${target}${labels.length ? ` with ${labels.join(" and ")} defaults` : " with core defaults"}\n`);
   io.stdout.write(`relaymux home: ${homeDir} (state ${resolveStateDir(config, io.env)}, logs ${resolveLogDir(config, io.env)})\n`);
   if (labels.length) {
-    io.stdout.write("Next: relaymux doctor && relaymux restart-launch-agent && relaymux status\n");
+    io.stdout.write("Next: relaymux restart-launch-agent\n");
+    io.stdout.write("Then: relaymux status-launch-agent && relaymux status\n");
   } else {
-    io.stdout.write("Tip: add optional adapters later with `relaymux init --imsg` or `relaymux init --telegram` into a new config.\n");
+    io.stdout.write("Tip: add optional adapters later with `relaymux init --imsg` or `relaymux init --telegram`.\n");
   }
   if (flags.installLaunchAgent) {
     installLaunchAgent({
@@ -182,6 +247,10 @@ async function handleInit(flags, io) {
     });
   }
   return 0;
+}
+
+function cloneConfig(config) {
+  return JSON.parse(JSON.stringify(config));
 }
 
 function handleMigrateHome(flags, configInfo, io) {
@@ -769,6 +838,7 @@ function doctorStatusLabel(check) {
   if (check.ok) return "ok";
   if (check.severity === "warning") return "warning";
   if (check.severity === "error") return "error";
+  if (check.fatal === false) return "warning";
   return "missing";
 }
 
@@ -911,11 +981,10 @@ Mental model:
 
 Start here:
   relaymux setup
-  relaymux doctor
   relaymux status
 
 Usage:
-  relaymux setup [--imsg|--telegram] [--chat-id <id>] [--telegram-chat-id <id>] [--no-launch-agent]
+  relaymux setup [--imsg|--telegram] [--chat-id <id>] [--telegram-chat-id <id>] [--no-launch-agent] [--dry-run]
   relaymux init [--force] [--config <path>]
   relaymux init --imsg [--chat-id <id>] [--install-launch-agent]
   relaymux init --telegram [--telegram-chat-id <id>] [--install-launch-agent]
@@ -943,6 +1012,7 @@ Setup/init options:
   --state-dir <path>        State/token/log directory
   --install-launch-agent    Install the direct/background LaunchAgent after writing config
   --no-launch-agent         For setup: skip LaunchAgent installation
+  --dry-run                 For setup: print planned config/service changes without writing files
 
 Migration options:
   --apply                   Copy inventoried relaymux-owned files into ~/.relaymux

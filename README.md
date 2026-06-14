@@ -52,6 +52,8 @@ Requirements for local agent launches are Node.js 20+, npm, git, and `tmux`. tmu
 curl -fsSL https://raw.githubusercontent.com/avyayv/relaymux/main/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
 relaymux --version
+relaymux setup
+relaymux status
 ```
 
 Or install from a clone:
@@ -61,7 +63,10 @@ git clone https://github.com/avyayv/relaymux.git
 cd relaymux
 ./install.sh
 export PATH="$HOME/.local/bin:$PATH"
+relaymux setup
 ```
+
+`relaymux setup` creates or updates `~/.relaymux/config.json`, installs/restarts the macOS LaunchAgent when supported, and prints the config path, log path, status, and next command. If launchd rejects the service, setup prints the plist path, daemon logs, `launchctl print ...` command, common causes, and the exact retry command.
 
 Optional adapter requirements:
 
@@ -135,11 +140,11 @@ The iMessage/SMS adapter is one optional integration. It uses your configured `i
 
 ```bash
 relaymux setup --imsg --chat-id <chat-id-or-phone-number>
-relaymux doctor
+relaymux status-launch-agent
 relaymux status
 ```
 
-`relaymux setup --imsg` creates `~/.relaymux/config.json`, tries to discover recent `imsg` chats when `--chat-id` is omitted, installs the LaunchAgent unless `--no-launch-agent` is passed, and prints next steps.
+`relaymux setup --imsg` creates or updates `~/.relaymux/config.json`, tries to discover recent `imsg` chats when `--chat-id` is omitted, installs/restarts the LaunchAgent unless `--no-launch-agent` is passed, and prints next steps. Re-running `relaymux init --imsg` or `relaymux setup --imsg` adds or updates the adapter on the existing config; `--force` is only for replacing the whole config.
 
 After setup, text the configured chat with a small request. Use a chat where your request appears as an incoming message to the Mac's Messages account; messages marked by Messages as sent by that Mac are ignored so relaymux does not respond to its own replies.
 
@@ -167,7 +172,7 @@ chmod 600 ~/.relaymux/secrets/telegram-bot-token
 relaymux setup --telegram \
   --telegram-chat-id <telegram-chat-id> \
   --telegram-bot-token-file ~/.relaymux/secrets/telegram-bot-token
-relaymux doctor
+relaymux status-launch-agent
 relaymux status
 ```
 
