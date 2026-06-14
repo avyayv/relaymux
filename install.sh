@@ -94,7 +94,12 @@ CLI shim written to $bin_dir/relaymux
 If needed, add this to your shell profile:
   export PATH="$bin_dir:\$PATH"
 
-Try:
+Next:
   relaymux --version
   relaymux setup
+  relaymux status
+
+Optional adapters:
+  relaymux setup --imsg --chat-id <chat-id-or-phone-number>
+  relaymux setup --telegram --telegram-chat-id <chat-id>
 EOF

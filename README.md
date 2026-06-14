@@ -14,17 +14,17 @@ Install relaymux and put the command on your PATH:
 curl -fsSL https://raw.githubusercontent.com/avyayv/relaymux/main/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
 relaymux --version
+relaymux setup
+relaymux status
 ```
 
 The installer clones and builds relaymux locally with Node/npm/git, writes app files under `~/.local/lib/relaymux`, and writes a `relaymux` shim under `~/.local/bin`.
 
-Create the default config:
+`relaymux setup` creates or updates `~/.relaymux/config.json`, installs/restarts the macOS LaunchAgent when supported, and prints the config path, log path, status, and next command. If launchd rejects the service, setup prints the plist path, daemon logs, `launchctl print ...` command, common causes, and the exact retry command.
 
-```bash
-relaymux init
-```
+For a config-only setup without starting the background service, use `relaymux setup --no-launch-agent`. `relaymux init` is the lower-level config writer; it refuses to overwrite an existing config unless you pass `--force`.
 
-`relaymux init` writes `~/.relaymux/config.json` and refuses to overwrite an existing config unless you pass `--force`. The generated config includes a harmless `custom` agent that prints its prompt, which is useful for checking that tmux/status behavior works before wiring a real agent:
+The generated config includes a harmless `custom` agent that prints its prompt, which is useful for checking that tmux/status behavior works before wiring a real agent:
 
 ```bash
 mkdir -p /tmp/relaymux-demo
@@ -108,8 +108,13 @@ iMessage/SMS through macOS Messages and an external `imsg` CLI:
 
 ```bash
 relaymux setup --imsg --chat-id <chat-id-or-phone-number>
-relaymux doctor
+relaymux status-launch-agent
+relaymux status
 ```
+
+`relaymux setup --imsg` creates or updates `~/.relaymux/config.json`, tries to discover recent `imsg` chats when `--chat-id` is omitted, installs/restarts the LaunchAgent unless `--no-launch-agent` is passed, and prints next steps. Re-running `relaymux init --imsg` or `relaymux setup --imsg` adds or updates the adapter on the existing config; `--force` is only for replacing the whole config.
+
+After setup, text the configured chat with a small request. Use a chat where your request appears as an incoming message to the Mac's Messages account; messages marked by Messages as sent by that Mac are ignored so relaymux does not respond to its own replies.
 
 Telegram through a Telegram bot:
 
@@ -117,7 +122,8 @@ Telegram through a Telegram bot:
 relaymux setup --telegram \
   --telegram-chat-id <telegram-chat-id> \
   --telegram-bot-token-file ~/.relaymux/secrets/telegram-bot-token
-relaymux doctor
+relaymux status-launch-agent
+relaymux status
 ```
 
 Then use `relaymux notify --reply-mode imessage` or `relaymux notify --reply-mode telegram` from an agent when you want an adapter-delivered update. In this command, reply mode means the delivery channel for a user-visible notification.

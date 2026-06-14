@@ -124,7 +124,16 @@ export function installLaunchAgent({ flags, configInfo, binPath, io }) {
     }
     const result = loadLaunchAgentTarget({ target, domain: launchAgentDomain(), plistPath });
     if (result.status !== 0) {
-      io.stderr.write(`launchctl bootstrap did not complete (${result.status}); watchdog will retry, or load manually with launchctl bootstrap ${launchAgentDomain()} ${plistPath}\n`);
+      io.stderr.write(formatLaunchAgentLoadFailure({
+        label,
+        result,
+        domain: launchAgentDomain(),
+        target,
+        plistPath,
+        logDir,
+        stdoutLog: path.join(logDir, `${logPrefix}.out.log`),
+        stderrLog: path.join(logDir, `${logPrefix}.err.log`),
+      }));
     }
   }
   return plistPath;
@@ -154,7 +163,16 @@ export function installLaunchAgentWatchdog({ config, configPath, binPath, io, lo
     const target = launchAgentWatchdogTarget(config);
     const result = loadLaunchAgentTarget({ target, domain: launchAgentDomain(), plistPath });
     if (result.status !== 0) {
-      io.stderr.write(`watchdog bootstrap did not complete (${result.status}); you can load manually with launchctl bootstrap ${launchAgentDomain()} ${plistPath}\n`);
+      io.stderr.write(formatLaunchAgentLoadFailure({
+        label: launchAgentWatchdogLabel(config),
+        result,
+        domain: launchAgentDomain(),
+        target,
+        plistPath,
+        logDir,
+        stdoutLog: path.join(logDir, "launch-agent-watchdog.out.log"),
+        stderrLog: path.join(logDir, "launch-agent-watchdog.err.log"),
+      }));
     }
   }
 
@@ -226,6 +244,9 @@ export function printLaunchAgentStatus({ config, io, json = false }) {
   if (!status.loaded) {
     io.stdout.write(`LaunchAgent ${status.label}: direct/background (no tmux) not loaded; plist ${status.plistExists ? status.plistPath : "missing"}\n`);
     if (status.detail) io.stdout.write(`Detail: ${status.detail}\n`);
+    io.stdout.write(`Logs: ${path.join(resolveLogDir(config), "daemon.out.log")} and ${path.join(resolveLogDir(config), "daemon.err.log")}\n`);
+    io.stdout.write(`Inspect: launchctl print ${status.target}\n`);
+    io.stdout.write("Next: relaymux restart-launch-agent\n");
     return status;
   }
 
@@ -260,6 +281,20 @@ export function getLaunchAgentWatchdogStatus(config) {
     intervalSeconds: launchAgentWatchdogIntervalSeconds(config),
     scriptPath: launchAgentWatchdogScriptPath(config),
   };
+}
+
+export function formatLaunchAgentLoadFailure({ label, result, domain, target, plistPath, logDir, stdoutLog, stderrLog }) {
+  const detail = firstLine(result.stderr) || firstLine(result.stdout) || "no launchctl detail";
+  return [
+    `relaymux: launchctl bootstrap failed for ${label} (status ${result.status}: ${detail})`,
+    `  plist: ${plistPath}`,
+    `  logs: ${stdoutLog || path.join(logDir, "daemon.out.log")} and ${stderrLog || path.join(logDir, "daemon.err.log")}`,
+    `  inspect: launchctl print ${target}`,
+    "  common causes: invalid plist, missing executable path, bad WorkingDirectory, or file permission problems",
+    `  next: run relaymux status-launch-agent; after fixing the issue, run relaymux restart-launch-agent`,
+    `  manual load: launchctl bootstrap ${domain} ${plistPath}`,
+    "",
+  ].join("\n");
 }
 
 function getLaunchAgentStatusFor({ label, plistPath, target }) {
