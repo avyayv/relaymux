@@ -1,7 +1,7 @@
 {
   "name": "relaymux",
   "version": "0.1.0",
-  "description": "Talk to a local Pi orchestrator over iMessage/SMS and delegate coding agents into tmux tabs.",
+  "description": "Orchestrate local CLI agents in tmux and receive async iMessage/SMS completions.",
   "type": "module",
   "scripts": {
     "build": "tsc && node -e \"require('fs').chmodSync('dist/bin/relaymux.js', 0o755)\"",

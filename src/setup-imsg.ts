@@ -68,7 +68,7 @@ export function buildImsgConfig(options: any = {}, env = process.env) {
       },
       codex: {
         description: "Codex subagent. Edit flags to match your local install.",
-        command: [codex, "--model", "gpt-5.5", "{prompt}"],
+        command: [codex, "{prompt}"],
         promptMode: "arg",
       },
       claude: {

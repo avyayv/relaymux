@@ -58,7 +58,7 @@
   },
   "agents": {
     "pi": { "command": ["pi", "{prompt}"], "promptMode": "arg" },
-    "codex": { "command": ["codex", "--model", "gpt-5.5", "{prompt}"], "promptMode": "arg" },
+    "codex": { "command": ["codex", "{prompt}"], "promptMode": "arg" },
     "claude": { "command": ["claude", "{prompt}"], "promptMode": "arg" }
   }
 }

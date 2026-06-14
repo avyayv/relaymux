@@ -1,92 +1,61 @@
 # relaymux
 
-Text your Mac to launch coding agents in `tmux` windows.
+`relaymux` launches local CLI agents in `tmux` windows and gives them a small, local completion path back to a daemon or run log.
 
-`relaymux` is a small local dispatcher for coding agents. You send a request over iMessage/SMS or from a terminal, a local orchestrator decides what to do, and delegated work runs as visible `tmux` windows you can attach to, inspect, and kill with normal terminal commands.
+```bash
+# Start a visible agent window in the shared tmux session.
+relaymux launch --repo ~/code/my-app --agent pi --name fix-tests \
+  --prompt "Fix the failing tests, then report back with relaymux notify."
 
-It is intentionally thin: relaymux does not try to be a model provider, agent runtime, IDE, or full agent platform. Your agents are just commands such as `pi`, `codex`, `claude`, or any custom shell command.
-
-```text
-iMessage/SMS or terminal
-        │
-        ▼
-relaymux background daemon ──▶ orchestrator command stdout becomes the reply
-        │                              │
-        │                              ▼
-        │                     relaymux launch
-        │                              │
-        ▼                              ▼
-notify updates ◀────────── tmux window running Pi/Codex/Claude/etc.
+# From inside an agent when the work is done or blocked.
+relaymux notify --from fix-tests --reply-mode imessage \
+  --idempotency-key fix-tests-20260614-done \
+  --message "Done: fixed the tests. Validation: npm test passed."
 ```
 
-## Quick start
+`--reply-mode imessage` is for machines with the optional daemon configured through `relaymux setup`. The iMessage/SMS path uses your configured `imsg` command; relaymux does not talk to Messages.app directly. Without the daemon, relaymux still launches local tmux agent windows and records run state, but it will not send text-message completions.
 
-Install from GitHub:
+relaymux is not a model provider, coding agent, IDE, or cloud runtime. It is a thin local coordinator for tools you already run in a terminal: `pi`, `codex`, `claude`, `aider`, shell scripts, or any command you add to your config.
+
+## Why relaymux exists
+
+Coding agents are useful, but running more than one usually turns into a pile of terminal tabs, forgotten prompts, and "did that finish?" checks. relaymux keeps the work visible in `tmux`, gives every delegated run a name and local state record, and provides one completion path: `relaymux notify`.
+
+The optional iMessage/SMS daemon lets you ask your Mac to start or coordinate agent work while you are away from the keyboard. Text the configured chat, the daemon runs your orchestrator command, and the orchestrator can either answer directly or launch longer work into `tmux`.
+
+## Core ideas
+
+An **agent** is just a command template in `~/.relaymux/config.json`. If you configure `pi`, relaymux runs `pi ...`; if you configure `codex`, it runs `codex ...`; if you configure `custom`, it can be any shell command.
+
+A **run** is one `relaymux launch`. By default, relaymux creates a new `tmux` window in one shared session named `agents`. tmux calls these windows; many terminal apps display them like tabs. relaymux does not create panes or splits for agent runs.
+
+The **daemon** is optional. On macOS, `relaymux setup` can install it as a per-user LaunchAgent. The daemon stays outside `tmux`, polls your configured message source, accepts local `relaymux ask` and `relaymux notify` requests, and runs your orchestrator command.
+
+The **orchestrator** is also just a command, but it has a different job from an agent. The orchestrator handles inbound requests from iMessage/SMS or `relaymux ask`; agents do delegated work launched with `relaymux launch`. The orchestrator receives incoming text plus relaymux instructions and prints a reply. The default iMessage setup uses Pi in non-interactive mode, but you can replace it with any command that accepts a prompt and writes a clean final response to stdout.
+
+relaymux stores its private config, token, run records, prompts, and logs under `~/.relaymux` by default:
+
+```text
+~/.relaymux/
+  config.json     # private config, written mode 0600
+  state/          # daemon state, run records, prompts, scripts, webhook token
+  logs/           # LaunchAgent stdout/stderr logs
+  tasks/          # optional task scratch space
+  reports/        # optional reports
+  research/       # optional research notes
+```
+
+## Install
+
+Requirements for local agent launches are Node.js 20+, npm, git, and `tmux`. tmux is the terminal multiplexer relaymux uses to keep agent runs visible as attachable sessions and windows.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/avyayv/relaymux/main/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
+relaymux --version
 ```
 
-Set up the iMessage/SMS adapter and background service:
-
-```bash
-relaymux setup
-relaymux doctor
-relaymux status
-```
-
-`relaymux setup` is the new-user path: it creates `~/.relaymux/config.json`, discovers recent `imsg` chats when possible, installs/loads the macOS LaunchAgent, and prints next steps. A healthy install should show `ok background-service ... LaunchAgent loaded` in `relaymux doctor`. If it says the service is not loaded, run `relaymux restart-launch-agent` from a normal terminal.
-
-`relaymux setup` tries to list recent Messages chats through `imsg chats --json` and prompts you to choose one. If discovery does not work, pass the chat id or phone number yourself:
-
-```bash
-relaymux setup --chat-id +15555550123
-```
-
-Launch a first agent window manually:
-
-```bash
-relaymux launch \
-  --repo ~/code/my-app \
-  --agent pi \
-  --name fix-api \
-  --prompt "Fix the API bug, run tests, and report back with relaymux notify."
-```
-
-Attach to the shared `tmux` session shown by `relaymux status`. tmux calls these “windows”; many terminal UIs display them like tabs.
-
-```bash
-tmux attach -t agents
-```
-
-## Mental model
-
-The background daemon runs directly as a macOS LaunchAgent, which is a per-user background service managed by launchd. It polls your configured message source, receives local terminal requests from `relaymux ask`, runs your orchestrator command, and sends replies. It does **not** run inside `tmux`.
-
-The orchestrator is just a command from your config. It receives the incoming request as prompt text, and whatever it prints to stdout becomes the reply. Use a non-interactive command whose stdout is a clean final response; if a CLI mixes logs into stdout, wrap it. If the orchestrator exits nonzero or times out, relaymux sends an error update instead. For orchestrators with `timeoutMs`, the default `timeoutMode` is `activity`: relaymux treats stdout/stderr and known Pi session-file writes as heartbeats, so healthy long turns are not killed by a fixed wall-clock timer.
-
-The default setup uses [Pi](https://github.com/earendil-works/pi) in non-interactive mode. Pi can use shell tools, so it can decide to run `relaymux launch` for longer work. You can replace Pi with any command that accepts a prompt and prints a reply, but that command can only launch delegated agents if it has a way to run shell commands.
-
-relaymux adds its runtime instructions directly to the prompt text passed to the orchestrator. Those instructions tell the orchestrator how to launch delegated work with `relaymux launch` and how delegated agents should report back with `relaymux notify`. You can extend them with `orchestrator.systemPromptFile` or `orchestrator.extraSystemPrompt` in config.
-
-Incoming messages do not need special chat syntax. The daemon polls every few seconds, ignores messages sent by you, and remembers seen message ids so it does not process the same inbound text repeatedly. The orchestrator can answer directly, or it can run `relaymux launch` when the work should happen in a separate terminal.
-
-Agent work runs in `tmux`. By default, every `relaymux launch` creates a new tmux window in one shared session named `agents`. relaymux does not create panes or splits. If you kill the tmux session, you kill those agent windows, but the background daemon keeps running.
-
-Subagents report progress or completion explicitly with `relaymux notify`. That command talks to a localhost-only HTTP endpoint protected by a random token stored in the token file. You normally do not call the endpoint yourself; use `relaymux notify`. Delegated agents should not send iMessages directly.
-
-## Requirements
-
-- macOS for the iMessage/SMS LaunchAgent flow. The Mac must be signed into Messages; SMS also depends on your normal iPhone/Mac SMS forwarding setup.
-- Node.js 20+, npm, and git.
-- `tmux` for agent windows.
-- An external `imsg` CLI installed as `imsg` that supports `chats`, `history`, and `send` commands with JSON output. relaymux does not install or vendor `imsg`; use the Messages.app CLI you already trust, then verify it with `imsg chats --limit 5 --json`.
-- At least one local agent/orchestrator command. The generated config assumes `pi` from [Pi](https://github.com/earendil-works/pi), and includes editable templates for `codex` and `claude`; install and authenticate those CLIs separately.
-
-If you only want terminal-launched tmux agents, you can still use `relaymux launch` without the iMessage flow after writing a config.
-
-## Install from a clone
+Or install from a clone:
 
 ```bash
 git clone https://github.com/avyayv/relaymux.git
@@ -95,22 +64,88 @@ cd relaymux
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-## Configuration
+For iMessage/SMS control you also need macOS, Messages signed in on that Mac, normal SMS forwarding if you want SMS, and an `imsg` CLI available as `imsg`. relaymux does not vendor or install `imsg`; it shells out to the message tool you configure. The expected commands are `imsg chats --limit <n> --json`, `imsg history --chat-id <id> --limit <n> --json`, and `imsg send --chat-id <id> --text <text> --json`.
 
-`relaymux setup` writes a private config file and managed data under `~/.relaymux`:
+## Try it in two minutes without iMessage
 
-```text
-~/.relaymux/
-  config.json          # private config, mode 0600
-  state/               # daemon state, run records, prompts, scripts, webhook token
-  logs/                # LaunchAgent stdout/stderr logs
-  tasks/               # default generated task scratch
-  reports/             # optional generated reports
-  research/            # optional generated research notes
-  workouts/            # optional generated workout logs
+This starts a harmless local run using the built-in default config, which includes a `custom` agent that just prints the prompt. You do not need to run `relaymux setup` first. `--repo` is the working directory for the command; it does not have to be a Git repository unless you use Git-specific features such as `--session-mode per-worktree`. `--hold` keeps the tmux window open after the command exits so you can inspect it.
+
+```bash
+mkdir -p /tmp/relaymux-demo
+relaymux launch \
+  --repo /tmp/relaymux-demo \
+  --agent custom \
+  --name hello-relaymux \
+  --hold \
+  --prompt "hello from relaymux"
 ```
 
-New relaymux-managed prompts, run records, completion notes, logs, and generated scratch/research/workout files should live under this home unless you pass an explicit path. The important config parts are the shared tmux session, the background daemon, the message adapters, the orchestrator command, and the agent command templates:
+Attach to the shared session:
+
+```bash
+tmux attach -t agents
+```
+
+In tmux, you should see a window named `hello-relaymux`. Detach with `Ctrl-b d`. Back in your shell:
+
+```bash
+relaymux status --history
+```
+
+Once that shape makes sense, replace `custom` with a real local agent from your config:
+
+```bash
+relaymux launch --repo ~/code/my-app --agent pi --name investigate-api \
+  --prompt "Investigate the API failure. When done or blocked, run relaymux notify with a concise summary."
+```
+
+## Optional iMessage/SMS setup
+
+The message flow is intentionally local:
+
+```text
+iMessage/SMS or relaymux ask
+        │
+        ▼
+relaymux daemon on your Mac ──▶ orchestrator command
+        │                              │
+        │                              └── may run relaymux launch
+        ▼
+reply text ◀──────────── relaymux notify from tmux agent windows
+```
+
+Run setup on the Mac that will receive and send messages:
+
+```bash
+relaymux setup
+relaymux doctor
+relaymux status
+```
+
+`relaymux setup` creates `~/.relaymux/config.json`, tries to discover recent `imsg` chats, installs the LaunchAgent, and prints next steps. The target can be an individual chat, group chat, or phone number understood by your `imsg` tool. If chat discovery is not available or you already know the target chat, pass it explicitly:
+
+```bash
+relaymux setup --chat-id <chat-id-or-phone-number>
+```
+
+After setup, text the configured chat with a small request. Use a chat where your request appears as an incoming message to the Mac's Messages account; messages marked by Messages as sent by that Mac are ignored so relaymux does not respond to its own replies. The daemon remembers message ids it has already seen, runs the orchestrator, and sends back the orchestrator's stdout as the reply.
+
+You can also send a request to the same daemon from a terminal:
+
+```bash
+relaymux ask "Launch an agent in ~/code/my-app to inspect the failing test"
+relaymux ask --no-wait --reply-mode imessage "Start a longer refactor and text me when it is delegated"
+```
+
+If you do not want a LaunchAgent, you can run the daemon in the foreground for debugging:
+
+```bash
+relaymux daemon
+```
+
+## Configuration
+
+`relaymux setup` writes a full config, but the important shape is small. Command arrays are argv templates; `{prompt}` and `{promptFile}` are substituted at launch time. The Pi commands below are examples, not requirements; edit them to match the agent CLIs you actually use.
 
 ```json
 {
@@ -118,14 +153,7 @@ New relaymux-managed prompts, run records, completion notes, logs, and generated
   "session": "agents",
   "stateDir": "~/.relaymux/state",
   "tmux": {
-    "sessionMode": "shared",
-    "sessionPrefix": "rmx"
-  },
-  "launchNotifications": {
-    "onExit": "never",
-    "replyMode": "imessage",
-    "tailLines": 80,
-    "tailBytes": 4000
+    "sessionMode": "shared"
   },
   "daemon": {
     "enabled": true,
@@ -133,15 +161,15 @@ New relaymux-managed prompts, run records, completion notes, logs, and generated
     "port": 47761,
     "tokenFile": "~/.relaymux/state/webhook-token",
     "launchAgentLabel": "com.relaymux.daemon",
-    "launchMode": "direct",
     "logDir": "~/.relaymux/logs"
   },
   "imessage": {
-    "chatId": "CHAT_ID_OR_PHONE",
+    "chatId": "<chat-id-or-phone-number>",
+    "pollMs": 3000,
     "receive": {
       "backend": "command",
       "command": {
-        "argv": ["imsg", "history", "--chat-id", "{chatId}", "--limit", "{limit}", "--attachments", "--convert-attachments", "--json"]
+        "argv": ["imsg", "history", "--chat-id", "{chatId}", "--limit", "{limit}", "--json"]
       }
     },
     "send": {
@@ -154,9 +182,7 @@ New relaymux-managed prompts, run records, completion notes, logs, and generated
   "orchestrator": {
     "cwd": "~",
     "command": ["pi", "--print", "--continue", "--session-dir", "~/.relaymux/state/sessions", "{prompt}"],
-    "promptMode": "arg",
-    "timeoutMs": 0,
-    "timeoutMode": "activity"
+    "promptMode": "arg"
   },
   "agents": {
     "pi": {
@@ -164,261 +190,144 @@ New relaymux-managed prompts, run records, completion notes, logs, and generated
       "promptMode": "arg"
     },
     "codex": {
-      "command": ["codex", "--model", "gpt-5.5", "{prompt}"],
+      "command": ["codex", "{prompt}"],
       "promptMode": "arg"
     },
-    "claude": {
-      "command": ["claude", "{prompt}"],
-      "promptMode": "arg"
+    "custom": {
+      "command": ["sh", "-lc", "printf '%s\\n' \"$RELAYMUX_PROMPT\""],
+      "promptMode": "env"
     }
   }
 }
 ```
 
-Agent commands are templates. If the command contains `{prompt}` or `{promptFile}`, relaymux substitutes those values. If it does not, `promptMode` decides what to do with the prompt. Valid values are `arg`, `env`, `stdin`, and `none`.
+Prompt passing modes are:
 
-Prompts can be passed inline or read from a file. `--prompt @prompt.txt` means “read the prompt text from `prompt.txt`.” You can also use `--prompt-file prompt.txt`.
+| `promptMode` | Behavior |
+| --- | --- |
+| `arg` | Append the prompt as a command-line argument unless `{prompt}` is already present. |
+| `env` | Put the prompt in `RELAYMUX_PROMPT`. |
+| `stdin` | Write the prompt under `~/.relaymux/state/prompts` and pipe that file to stdin. |
+| `none` | Do not pass the prompt automatically. |
 
-## Session behavior
+Use `--prompt @prompt.txt` or `--prompt-file prompt.txt` for longer prompts. The orchestrator follows the same command-template rules as agents: relaymux passes it a prompt, expects a useful final reply on stdout, and treats a nonzero exit as an error to report.
 
-The default is one shared tmux session:
+## Common workflows
 
-```json
-{
-  "session": "agents",
-  "tmux": { "sessionMode": "shared" }
-}
-```
-
-That means work from different repos and worktrees appears as windows in the same session unless you ask for a different shape.
-
-Use an explicit session when you want a separate group of windows:
+Launch a named agent in the default shared session:
 
 ```bash
-relaymux launch --session my-task --repo ~/code/app --agent pi --prompt @prompt.txt
+relaymux launch --repo ~/code/my-app --agent pi --name fix-api --prompt @prompt.txt
 ```
 
-Use per-worktree sessions when you want deterministic isolation by Git worktree or branch. relaymux derives the session name from the repo/worktree/branch plus a short hash, so repeated launches for the same worktree land in the same named session. If you do not use Git worktrees, you can ignore this mode.
+Launch into a separate tmux session when you want an isolated group of windows:
 
 ```bash
-relaymux launch --session-mode per-worktree --repo ~/code/app --agent pi --prompt @prompt.txt
+relaymux launch --session release-fix --repo ~/code/my-app --agent codex --prompt @prompt.txt
 ```
 
-Or make per-worktree sessions the default:
-
-```json
-{
-  "tmux": {
-    "sessionMode": "per-worktree",
-    "sessionPrefix": "rmx"
-  }
-}
-```
-
-relaymux-managed panes/splits are not used.
-
-## Common commands
+Use per-worktree sessions when each Git worktree should get a stable session name. In this mode, relaymux derives the session from the repo/worktree/branch plus a short hash:
 
 ```bash
-relaymux doctor                 # check config, home layout, commands, token permissions, and background mode
-relaymux status                 # show background service and relaymux-managed tmux windows
-relaymux status --session NAME  # filter status to one tmux session
-relaymux status --history       # include old run records whose windows are gone
-relaymux status-launch-agent    # show launchd status for the background service
-relaymux restart-launch-agent   # regenerate and reload the LaunchAgent
-relaymux migrate-home --dry-run # inventory old relaymux-owned paths before copying into ~/.relaymux
+relaymux launch --session-mode per-worktree --repo ~/code/my-app --agent pi --prompt @prompt.txt
 ```
 
-Ask the orchestrator from a terminal:
-
-```bash
-relaymux ask "open a subagent in ~/code/my-app to fix the failing test"
-```
-
-Notify from a delegated agent:
+Send a completion from a delegated agent. Manual notifications with `--reply-mode` require the daemon; local runs still record automatic `started` and `completed` events even without it:
 
 ```bash
 relaymux notify \
   --from fix-api \
   --reply-mode imessage \
-  --idempotency-key fix-api-done \
-  --message "Finished: fixed the API bug and tests pass."
+  --idempotency-key fix-api-20260614-done \
+  --message "Finished: fixed the API bug. Validation: npm test passed."
 ```
 
-`--reply-mode imessage` asks the daemon to send a user-visible text update. `--reply-mode none` still re-prompts the daemon/orchestrator path, but suppresses the outgoing iMessage. Use it for progress notes that should affect the orchestrator's context or logs without texting the user. Whether that context persists depends on your orchestrator command; the default Pi command uses `--continue` with a relaymux session directory.
+`--reply-mode imessage` asks the daemon to send a user-visible update to the configured chat. `--reply-mode none` posts the completion to the daemon so the orchestrator can observe it, but suppresses the outgoing text. Use a stable `--idempotency-key` for one logical update so retries do not send duplicates.
 
-The idempotency key is a stable de-duplication string for one logical update. If a delegated agent retries the same completion notification, reuse the same key so relaymux does not send duplicate text messages.
-
-## Delegated-run guardrails
-
-`relaymux doctor` statically checks configured agent command templates for known stale flags before you launch. For Codex, it reports `--reasoning-effort` as an error because current Codex CLI releases reject that flag; remove the flag/value from `~/.relaymux/config.json` and rerun `relaymux doctor`. `relaymux launch` runs the same fatal validation before opening tmux, so a stale known flag fails in the caller instead of disappearing into a tmux tab.
-
-Every tmux launch records local `started` and `completed` events. For user-visible completion that does not depend on the subagent following prompt instructions, opt into wrapper-level exit notifications:
-
-```json
-{
-  "launchNotifications": {
-    "onExit": "failure",
-    "replyMode": "imessage",
-    "tailLines": 80,
-    "tailBytes": 4000
-  }
-}
-```
-
-`onExit` may be `never` (default), `failure`, or `always`. `failure` sends a relaymux notification only for nonzero exits; `always` also sends success notifications. `replyMode: "imessage"` asks the daemon to send a chat update. Nonzero auto-notifications include the run name, run id, exit code, and a bounded recent tmux output tail when available. You can also set this for one launch:
+Turn on wrapper-level exit notifications if you want a fallback even when the agent forgets to call `relaymux notify`. `failure` means only nonzero exits notify; `always` also notifies on success; `never` is the default:
 
 ```bash
-relaymux launch \
-  --repo ~/code/my-app \
-  --agent codex \
-  --name email-draft \
-  --notify-on-exit always \
-  --notify-reply-mode imessage \
+relaymux launch --repo ~/code/my-app --agent pi --name risky-task \
+  --notify-on-exit failure --notify-reply-mode imessage \
   --prompt @prompt.txt
 ```
 
-Still include an explicit completion instruction in delegated prompts for richer summaries:
-
-```text
-When done or blocked, run:
-relaymux notify --from email-draft --reply-mode imessage \
-  --idempotency-key email-draft-<date>-done \
-  --message "Finished: summary, validation, blockers."
-```
-
-The wrapper-level notification is a fallback; the explicit `relaymux notify` should carry the useful human summary.
-
-## Migrating old relaymux-managed files
-
-New installs use `~/.relaymux`, but older local setups may still have relaymux-owned config/state under `~/.config/relaymux`, `~/.local/state/relaymux`, old `agentmux` paths, `~/.pi/agent/orchestrator-imessage`, or prompt scratch like `~/research/orchestrator-prompts-*`.
-
-Start with an inventory; it prints paths only, never token contents:
+Inspect local state. `--history` includes old run records whose tmux windows have already exited:
 
 ```bash
-relaymux migrate-home --dry-run
-```
-
-If the plan looks right, copy only those relaymux-owned files into `~/.relaymux`:
-
-```bash
-relaymux migrate-home --apply
+relaymux status
+relaymux status --history
 relaymux doctor
+relaymux status-launch-agent
+```
+
+Manage the background service:
+
+```bash
 relaymux restart-launch-agent
-```
-
-`--apply` copies and leaves the original files in place for backcompat. Add `--symlink` only if you want migrated source paths replaced by symlinks after copying. relaymux intentionally does **not** blindly move all of `~/research`, `~/personal`, or other canonical personal directories.
-
-## Cleanup
-
-Stop the background service and remove the installed binary:
-
-```bash
 relaymux uninstall-launch-agent
-rm -rf ~/.local/lib/relaymux ~/.local/bin/relaymux
 ```
 
-Optionally remove local state and config after checking for data you want to keep:
+## Safety model and limitations
 
-```bash
-rm -rf ~/.relaymux
-# Legacy installs may also have:
-# rm -rf ~/.local/state/relaymux ~/.config/relaymux
-```
+relaymux is designed for a single user's local machine. The daemon binds to `127.0.0.1` and `relaymux notify` authenticates to it with a random token stored under `~/.relaymux/state`. The config file is written with private file permissions.
 
-Killing a tmux session only kills the windows in that session:
+That does not make arbitrary agents safe. If an incoming message causes your orchestrator to launch `pi`, `codex`, `claude`, or a shell script, that command has the same local permissions it would have if you ran it yourself. Configure relaymux only with chats and agents you trust, review your agent prompts, and assume prompts, logs, tmux scrollback, and run records may contain sensitive project context.
 
-```bash
-tmux kill-session -t agents
-```
-
-It does not uninstall relaymux or stop the LaunchAgent.
+relaymux is probably the wrong tool if you need a sandbox, a multi-tenant service, durable distributed jobs, a cron/scheduler, hosted model inference, or a web UI. It is also not a general iMessage library; iMessage/SMS support depends on macOS, Messages.app, and the external `imsg` command you choose.
 
 ## Troubleshooting
 
-### Background service unloaded after a restart
-
-If `relaymux status-launch-agent` says `not loaded`, reload it from a normal terminal:
+If setup says the LaunchAgent is not loaded, reload it from a normal terminal:
 
 ```bash
 relaymux restart-launch-agent
 relaymux status-launch-agent
 ```
 
-relaymux protects against the common self-restart trap: when `restart-launch-agent` is invoked from inside the relaymux LaunchAgent, it now schedules a short-lived helper LaunchAgent to do the reload after the current chat turn has time to reply. Direct `launchctl bootout` from inside the daemon can kill the daemon before it marks the message seen.
-
-### Messages permissions
-
-If receive/send fails, grant the terminal or automation host Full Disk Access and Messages Automation permissions required by your `imsg` tool. Then run:
+If Messages send/receive fails, verify your `imsg` CLI first:
 
 ```bash
-relaymux doctor
-relaymux restart-launch-agent
-```
-
-### LaunchAgent status and logs
-
-```bash
-relaymux status-launch-agent
-launchctl print gui/$(id -u)/com.relaymux.daemon
-ls ~/.relaymux/logs
-```
-
-The generated LaunchAgent should run `node ... relaymux ... daemon` directly. It should not contain `tmux`, `supervise-tmux`, `TMUX_TMPDIR`, or `RELAYMUX_SESSION`.
-
-### Token file permissions
-
-The local token file stores the random secret used by `relaymux notify` to reach the localhost HTTP endpoint. It must not be group/world-readable:
-
-```bash
-chmod 600 ~/.relaymux/state/webhook-token
+imsg chats --limit 5 --json
 relaymux doctor
 ```
 
-### tmux not found
+You may need to grant the terminal or automation host the macOS permissions required by your message tool, such as Full Disk Access or Messages automation permission.
 
-Install tmux and make sure it is on the PATH seen by your shell:
+If tmux is missing:
 
 ```bash
 brew install tmux
 relaymux doctor
 ```
 
-The background service can run without tmux, but agent windows need it.
-
-### Config errors
-
-Check that the config exists and is private:
+If the notify token has loose permissions:
 
 ```bash
-ls -l ~/.relaymux/config.json
+chmod 600 ~/.relaymux/state/webhook-token
 relaymux doctor
 ```
 
-Use `relaymux setup --force` only if you intentionally want to rewrite the config.
-
-## Test without real iMessage
-
-The mock config uses fake receive/send commands, so you can test the daemon and tmux launch path without touching Messages.app:
+For a no-Messages smoke test from a clone:
 
 ```bash
 npm run build
 rm -rf /tmp/relaymux-mock
 node ./dist/bin/relaymux.js --config examples/config.mock.json daemon --once
+node ./dist/bin/relaymux.js --config examples/config.mock.json launch \
+  --repo /tmp/relaymux-mock/repo --agent custom --name smoke --prompt "smoke"
+node ./dist/bin/relaymux.js --config examples/config.mock.json status --history
 ```
 
-Launch a harmless mock agent window:
+## Development
 
 ```bash
-mkdir -p /tmp/relaymux-mock/repo
-node ./dist/bin/relaymux.js --config examples/config.mock.json launch \
-  --repo /tmp/relaymux-mock/repo \
-  --agent custom \
-  --name smoke \
-  --prompt "smoke"
-node ./dist/bin/relaymux.js --config examples/config.mock.json status
+npm ci
+npm run validate
 ```
 
-## Notes
+Issues and pull requests are welcome. Please keep public examples free of private paths, phone numbers, chat ids, and secrets.
 
-relaymux does not include private prompts, phone numbers, secrets, or repo-specific context. The notify endpoint binds to localhost and requires the token file.
+## License
+
+MIT

@@ -27,14 +27,14 @@ function writeStaleCodexConfig() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-stale-codex-"));
   const configPath = path.join(dir, "config.json");
   const config = defaultConfig();
-  config.agents.codex.command = ["codex", "--model", "gpt-5.5", "--reasoning-effort", "xhigh", "{prompt}"];
+  config.agents.codex.command = ["codex", "--reasoning-effort", "xhigh", "{prompt}"];
   writeConfig(configPath, config, { force: true });
   return { dir, configPath };
 }
 
 test("Codex command validation rejects stale --reasoning-effort", () => {
   const findings = validateConfiguredAgentCommand("codex", {
-    command: ["codex", "--model", "gpt-5.5", "--reasoning-effort", "xhigh", "{prompt}"],
+    command: ["codex", "--reasoning-effort", "xhigh", "{prompt}"],
     promptMode: "arg",
   });
 

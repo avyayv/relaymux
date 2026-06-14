@@ -83,7 +83,7 @@ export function defaultConfig(env = process.env) {
       },
       codex: {
         description: "Codex CLI template. Edit flags to match your local install.",
-        command: ["codex", "--model", "gpt-5.5", "{prompt}"],
+        command: ["codex", "{prompt}"],
         promptMode: "arg",
       },
       claude: {
