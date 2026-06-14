@@ -64,6 +64,24 @@ test("renderLaunchAgentPlist can include a start interval", () => {
   assert.match(plist, /<integer>60<\/integer>/);
 });
 
+test("renderLaunchAgentPlist can include launchd calendar intervals", () => {
+  const plist = renderLaunchAgentPlist({
+    label: "com.example.relaymux.schedule.daily",
+    programArguments: ["/usr/bin/node", "/tmp/relaymux.js", "ask", "--no-wait"],
+    workingDirectory: "/tmp/work",
+    standardOutPath: "/tmp/out.log",
+    standardErrorPath: "/tmp/err.log",
+    keepAlive: false,
+    runAtLoad: false,
+    startCalendarIntervals: [{ Minute: 0, Hour: 9 }],
+  });
+
+  assert.match(plist, /<key>RunAtLoad<\/key>\n  <false\/>/);
+  assert.match(plist, /<key>StartCalendarInterval<\/key>/);
+  assert.match(plist, /<key>Minute<\/key>\n    <integer>0<\/integer>/);
+  assert.match(plist, /<key>Hour<\/key>\n    <integer>9<\/integer>/);
+});
+
 test("renderLaunchAgentWatchdogPlist points at the main daemon and health endpoint", () => {
   const base = defaultConfig();
   const config = {

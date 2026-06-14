@@ -37,7 +37,7 @@ relaymux stores private config, token, run records, prompts, and logs under `~/.
 ```text
 ~/.relaymux/
   config.json     # private config, written mode 0600
-  state/          # daemon state, run records, prompts, scripts, webhook token
+  state/          # daemon state, run records, prompts, scripts, schedules, webhook token
   logs/           # LaunchAgent stdout/stderr logs
   tasks/          # optional task scratch space
   reports/        # optional reports
@@ -104,6 +104,14 @@ relaymux launch --repo ~/code/my-app --agent pi --name investigate-api \
 ## Local API/webhook
 
 The daemon exposes the core integration point on loopback only. `relaymux ask` and `relaymux notify --reply-mode ...` are CLI wrappers over this API.
+
+Use `relaymux ask` when you want to send a local request directly to the configured orchestrator:
+
+```bash
+relaymux ask --reply-mode none "Summarize active relaymux runs and note anything blocked."
+```
+
+`relaymux ask` requires the relaymux daemon to be running. `relaymux setup` installs the daemon as a per-user LaunchAgent on macOS, and `relaymux restart-launch-agent` reloads it after config changes.
 
 Default endpoints:
 
@@ -313,6 +321,27 @@ relaymux launch --repo ~/code/my-app --agent pi --name risky-task \
   --prompt @prompt.txt
 ```
 
+Schedule a recurring local prompt when you want the orchestrator asked on a clock, such as a weekday morning check-in:
+
+```bash
+relaymux schedule add \
+  --name weekday-checkin \
+  --cron "0 9 * * 1-5" \
+  --reply-mode imessage \
+  --prompt "Check the active agent runs and send me a concise status."
+```
+
+Scheduled prompts are local OS jobs. Automatic install currently uses macOS launchd: relaymux writes a per-user LaunchAgent that runs `relaymux ask --no-wait` on the schedule. It does not create a hidden cloud scheduler or a durable in-process loop inside the daemon. The relaymux daemon must be running when the schedule fires, so run `relaymux restart-launch-agent` after setup if needed. On non-macOS systems, use `--dry-run` to inspect the generated job; automatic install currently requires macOS launchd.
+
+Use `--prompt-file prompt.txt` for longer prompts. relaymux copies the prompt into `~/.relaymux/state/schedules/<name>/prompt.txt`, stores schedule metadata beside it, and writes schedule logs under `~/.relaymux/logs/schedules`. Re-adding the same `--name` updates that schedule instead of creating a duplicate.
+
+```bash
+relaymux schedule list
+relaymux schedule remove --name weekday-checkin
+```
+
+`--reply-mode none` keeps the request local and quiet. `--reply-mode imessage` or `--reply-mode telegram` sends the orchestrator's final reply through that configured adapter. Cron expressions use five fields: minute, hour, day of month, month, and day of week. For launchd compatibility, avoid expressions that constrain both day of month and day of week in the same schedule.
+
 Inspect local state. `--history` includes old run records whose tmux windows have already exited:
 
 ```bash
@@ -338,7 +367,7 @@ relaymux is designed for a single user's local machine. The daemon binds to `127
 
 That does not make arbitrary agents safe. If a local request or adapter message causes your orchestrator to launch `pi`, `codex`, `claude`, or a shell script, that command has the same local permissions it would have if you ran it yourself. Configure relaymux only with adapters and agents you trust, review your agent prompts, and assume prompts, logs, tmux scrollback, and run records may contain sensitive project context.
 
-relaymux is probably the wrong tool if you need a sandbox, a multi-tenant service, durable distributed jobs, a cron/scheduler, hosted model inference, or a web UI. It is also not a general iMessage, SMS, or Telegram library.
+relaymux is probably the wrong tool if you need a sandbox, a multi-tenant service, durable distributed jobs, a hosted scheduler, hosted model inference, or a web UI. `relaymux schedule` is only a local OS scheduler wrapper for simple recurring prompts. relaymux is also not a general iMessage, SMS, or Telegram library.
 
 ## Troubleshooting
 

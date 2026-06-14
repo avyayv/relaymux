@@ -11,6 +11,7 @@ import { defaultConfig, defaultConfigPath, isIntegrationEnabled, loadConfig, res
 import { runDaemon } from "./daemon.js";
 import { getLaunchAgentStatus, getLaunchAgentWatchdogStatus, installLaunchAgent, launchAgentPath, printLaunchAgentStatus, restartLaunchAgent, uninstallLaunchAgent } from "./launch-agent.js";
 import { handleNotify } from "./notify.js";
+import { handleSchedule, scheduleHelpText } from "./schedule.js";
 import { webhookConfig, webhookStatus } from "./webhook.js";
 import { expandPath, ensureDirectory, pathExists, readTextFile } from "./paths.js";
 import { applyHomeMigration, buildHomeMigrationInventory, ensureRelaymuxHomeLayout, formatHomeMigrationInventory, formatHomeMigrationResults } from "./migration.js";
@@ -27,6 +28,10 @@ export async function main(argv, io = defaultIo()) {
     const parsed = parseArgv(argv);
     if (parsed.flags.version || parsed.command === "version") {
       io.stdout.write("relaymux 0.1.0\n");
+      return 0;
+    }
+    if (parsed.flags.help && parsed.command === "schedule") {
+      io.stdout.write(scheduleHelpText());
       return 0;
     }
     if (parsed.flags.help || parsed.command === "help") {
@@ -64,6 +69,15 @@ export async function main(argv, io = defaultIo()) {
       case "ask":
       case "request":
         return handleAsk(parsed.flags, parsed.positionals, configInfo, io);
+      case "schedule":
+        return handleSchedule({
+          flags: parsed.flags,
+          positionals: parsed.positionals,
+          configInfo,
+          stateDir,
+          binPath: process.argv[1],
+          io,
+        });
       case "daemon":
         return await runDaemon({ flags: parsed.flags, configInfo, stateDir, io });
       case "start-tmux":
@@ -925,6 +939,8 @@ Usage:
   relaymux uninstall-launch-agent
   relaymux launch --repo <path> --agent <name> --prompt <text|@file> [--name <name>] [--notify-on-exit never|failure|always]
   relaymux ask <text> [--no-wait] [--reply-mode imessage|telegram|none]
+  relaymux schedule add --name <name> --prompt <text> --cron "0 9 * * *" [--reply-mode none|imessage|telegram]
+  relaymux schedule list|remove [--name <name>]
   relaymux status [--json] [--session <name>]
   relaymux notify [--run-id <id>] [--reply-mode imessage|telegram|none] [--message <text>]
   relaymux migrate-home [--dry-run] [--apply] [--symlink]
@@ -982,6 +998,12 @@ Request/notify/status options:
   --idempotency-key <key>    For notify: suppress duplicate completion webhook retries
   --metadata-json <json>     For notify: optional metadata object
   --history                  For status: include old run records whose tmux tabs are gone
+
+Schedule options:
+  --cron <expr>              Five-field cron schedule for relaymux schedule add
+  --prompt-file <path>       Read scheduled prompt text from a file
+  --reply-mode <mode>        Scheduled ask reply mode: none, imessage, or telegram
+  --no-load                  Write the schedule LaunchAgent without loading it
 
 Useful commands:
   tmux attach -t <session>       attach to the shared or named agent session

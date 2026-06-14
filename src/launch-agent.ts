@@ -26,10 +26,22 @@ export function launchAgentWatchdogLabel(config) {
   return `${launchAgentLabel(config)}.watchdog`;
 }
 
-export function renderLaunchAgentPlist({ label, programArguments, workingDirectory, standardOutPath, standardErrorPath, environment = {}, keepAlive = true, startInterval = 0 }) {
+export function renderLaunchAgentPlist({
+  label,
+  programArguments,
+  workingDirectory,
+  standardOutPath,
+  standardErrorPath,
+  environment = {},
+  keepAlive = true,
+  runAtLoad = true,
+  startInterval = 0,
+  startCalendarIntervals = [],
+}) {
   const args = programArguments.map((arg) => `    <string>${xmlEscape(arg)}</string>`).join("\n");
   const env = renderEnvironment(environment);
   const interval = renderStartInterval(startInterval);
+  const calendarIntervals = renderStartCalendarIntervals(startCalendarIntervals);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -43,9 +55,9 @@ ${args}
   <key>WorkingDirectory</key>
   <string>${xmlEscape(workingDirectory)}</string>${env}
   <key>RunAtLoad</key>
-  <true/>
+  ${runAtLoad ? "<true/>" : "<false/>"}
   <key>KeepAlive</key>
-  ${keepAlive ? "<true/>" : "<false/>"}${interval}
+  ${keepAlive ? "<true/>" : "<false/>"}${interval}${calendarIntervals}
   <key>StandardOutPath</key>
   <string>${xmlEscape(standardOutPath)}</string>
   <key>StandardErrorPath</key>
@@ -454,7 +466,7 @@ function loadLaunchAgentTarget({ target, domain, plistPath }) {
   return result;
 }
 
-function stableNodePath() {
+export function stableNodePath() {
   for (const candidate of ["/opt/homebrew/bin/node", "/usr/local/bin/node", process.execPath]) {
     try {
       fs.accessSync(candidate, fs.constants.X_OK);
@@ -506,7 +518,7 @@ function launchAgentEnvironment(config, configPath) {
   return environment;
 }
 
-function defaultLaunchPath() {
+export function defaultLaunchPath() {
   const pathParts = [
     path.join(os.homedir(), ".local", "bin"),
     "/opt/homebrew/bin",
@@ -523,6 +535,36 @@ function renderStartInterval(startInterval) {
   const interval = Number(startInterval || 0);
   if (!Number.isFinite(interval) || interval <= 0) return "";
   return `\n  <key>StartInterval</key>\n  <integer>${Math.floor(interval)}</integer>`;
+}
+
+function renderStartCalendarIntervals(startCalendarIntervals) {
+  const intervals = Array.isArray(startCalendarIntervals) ? startCalendarIntervals : [];
+  if (!intervals.length) return "";
+
+  const rendered = intervals.map(renderStartCalendarIntervalDict);
+  if (rendered.length === 1) {
+    return `\n  <key>StartCalendarInterval</key>\n${rendered[0]}`;
+  }
+  return `\n  <key>StartCalendarInterval</key>\n  <array>\n${rendered.map((item) => indent(item, 4)).join("\n")}\n  </array>`;
+}
+
+function renderStartCalendarIntervalDict(interval) {
+  const entries = Object.entries(interval || {})
+    .filter(([key, value]) => ["Minute", "Hour", "Day", "Month", "Weekday"].includes(key) && value !== undefined && value !== null)
+    .map(([key, value]) => {
+      const number = Number(value);
+      if (!Number.isInteger(number)) {
+        throw new Error(`StartCalendarInterval ${key} must be an integer`);
+      }
+      return `    <key>${key}</key>\n    <integer>${number}</integer>`;
+    })
+    .join("\n");
+  return `  <dict>${entries ? `\n${entries}\n  ` : ""}</dict>`;
+}
+
+function indent(value, spaces) {
+  const prefix = " ".repeat(spaces);
+  return String(value).split("\n").map((line) => `${prefix}${line}`).join("\n");
 }
 
 function renderEnvironment(environment) {
