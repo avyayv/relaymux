@@ -295,7 +295,7 @@ test("setup dry-run does not write config or mutate LaunchAgents", async () => {
   assert.equal(fs.existsSync(configPath), false);
 });
 
-test("doctor exits zero when only the background service is missing", async () => {
+test("doctor exits zero when only the background service is missing or unsupported", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-doctor-background-"));
   const binDir = path.join(dir, "bin");
   fs.mkdirSync(binDir);
@@ -313,8 +313,12 @@ test("doctor exits zero when only the background service is missing", async () =
     const code = await main(["--config", configPath, "doctor"], harness.io);
 
     assert.equal(code, 0);
-    assert.match(harness.stdout, /warning\tbackground-service\t/);
-    assert.match(harness.stdout, /relaymux restart-launch-agent|unsupported/);
+    if (process.platform === "darwin") {
+      assert.match(harness.stdout, /warning\tbackground-service\t/);
+      assert.match(harness.stdout, /relaymux restart-launch-agent/);
+    } else {
+      assert.match(harness.stdout, /ok\tbackground-service\t.*unsupported/);
+    }
   } finally {
     process.env.PATH = oldPath;
   }
