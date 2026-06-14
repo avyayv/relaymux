@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { resolveLogDir } from "./config.js";
+import { quoteArgv } from "./command.js";
 import { expandPath, ensureDirectory } from "./paths.js";
 import { runCommand } from "./process.js";
 import { killWindowByName, validateSessionName } from "./tmux.js";
@@ -83,6 +84,11 @@ export function installLaunchAgent({ flags, configInfo, binPath, io }) {
 
   if (flags.load !== false) {
     const target = launchAgentTarget(config);
+    if (process.platform === "darwin" && isCurrentLaunchAgent(config, process.env) && flags.immediateSelfRestart !== true) {
+      scheduleLaunchAgentReloadHelper({ config, plistPath, io });
+      return plistPath;
+    }
+
     runCommand("launchctl", ["bootout", target], { allowFailure: true });
     if (process.platform === "darwin" && launchMode === "direct" && flags.keepTmuxDaemon !== true) {
       const windowName = String(flags.windowName || "relaymux-daemon");
@@ -195,6 +201,83 @@ export function uninstallLaunchAgent({ config, io }) {
     io.stdout.write(`No LaunchAgent found at ${plistPath}\n`);
   }
   return plistPath;
+}
+
+export function isCurrentLaunchAgent(config, env = process.env) {
+  const label = launchAgentLabel(config);
+  return env.XPC_SERVICE_NAME === label || env.LAUNCHD_JOB_LABEL === label;
+}
+
+export function scheduleLaunchAgentReloadHelper({ config, plistPath, io }) {
+  const mainLabel = launchAgentLabel(config);
+  const helperLabel = `${mainLabel}.reload.${process.pid}.${Date.now()}`;
+  const helperPlistPath = path.join(os.homedir(), "Library", "LaunchAgents", `${helperLabel}.plist`);
+  const logDir = resolveLogDir(config);
+  const scriptPath = path.join(logDir, `${helperLabel}.sh`);
+  const logPath = path.join(logDir, "launch-agent-reload.log");
+  const domain = launchAgentDomain();
+  const target = launchAgentTarget(config);
+  const helperTarget = `${domain}/${helperLabel}`;
+  const delaySeconds = Math.max(1, Math.ceil(Number(config.daemon?.selfRestartDelayMs || 30000) / 1000));
+
+  ensureDirectory(path.dirname(helperPlistPath));
+  ensureDirectory(logDir);
+  fs.writeFileSync(scriptPath, renderLaunchAgentReloadScript({
+    delaySeconds,
+    domain,
+    helperPlistPath,
+    helperTarget,
+    plistPath,
+    scriptPath,
+    target,
+  }), { mode: 0o700 });
+  try { fs.chmodSync(scriptPath, 0o700); } catch {}
+
+  const helperPlist = renderLaunchAgentPlist({
+    label: helperLabel,
+    programArguments: ["/bin/sh", scriptPath],
+    workingDirectory: os.homedir(),
+    environment: {
+      PATH: defaultLaunchPath(),
+      HOME: os.homedir(),
+    },
+    standardOutPath: logPath,
+    standardErrorPath: logPath,
+    keepAlive: false,
+  });
+  fs.writeFileSync(helperPlistPath, helperPlist, { mode: 0o644 });
+
+  runCommand("launchctl", ["bootout", helperTarget], { allowFailure: true });
+  const result = runCommand("launchctl", ["bootstrap", domain, helperPlistPath], { allowFailure: true });
+  if (result.status !== 0) {
+    throw new Error(`Could not schedule LaunchAgent reload helper (${result.status}): ${firstLine(result.stderr) || firstLine(result.stdout)}`);
+  }
+  runCommand("launchctl", ["kickstart", "-k", helperTarget], { allowFailure: true });
+  io.stdout.write(`Scheduled LaunchAgent reload helper ${helperLabel} in ${delaySeconds}s; log ${logPath}\n`);
+  return helperPlistPath;
+}
+
+export function renderLaunchAgentReloadScript({ delaySeconds, domain, helperPlistPath, helperTarget, plistPath, scriptPath, target }) {
+  return [
+    "#!/bin/sh",
+    "set -u",
+    `sleep ${Math.max(1, Number(delaySeconds) || 1)}`,
+    `printf '[%s] reloading %s from %s\\n' "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" ${quoteArgv([target])} ${quoteArgv([plistPath])}`,
+    `${quoteArgv(["launchctl", "bootout", target])} >/dev/null 2>&1 || true`,
+    "sleep 1",
+    `${quoteArgv(["launchctl", "enable", target])} >/dev/null 2>&1 || true`,
+    `if ${quoteArgv(["launchctl", "bootstrap", domain, plistPath])}; then`,
+    `  ${quoteArgv(["launchctl", "kickstart", "-k", target])} >/dev/null 2>&1 || true`,
+    `  ${quoteArgv(["launchctl", "print", target])} || true`,
+    "else",
+    "  status=$?",
+    "  echo \"bootstrap failed with status $status\"",
+    `  ${quoteArgv(["launchctl", "print", target])} || true`,
+    "  exit \"$status\"",
+    "fi",
+    `${quoteArgv(["rm", "-f", helperPlistPath, scriptPath])} || true`,
+    `${quoteArgv(["launchctl", "bootout", helperTarget])} >/dev/null 2>&1 || true`,
+  ].join("\n") + "\n";
 }
 
 export function launchAgentDomain() {

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildAdapterArgv,
+  commandSafeMessageText,
   formatIncomingForPrompt,
   isIncomingUserMessage,
   normalizeMessages,
@@ -37,6 +38,11 @@ test("buildAdapterArgv renders command placeholders", () => {
     buildAdapterArgv({ argv: ["imsg", "send", "--chat-id", "{chatId}", "--text", "{text}"] }, { chatId: "1", text: "hello" }),
     ["imsg", "send", "--chat-id", "1", "--text", "hello"],
   );
+});
+
+test("commandSafeMessageText protects dash-leading replies from option parsing", () => {
+  assert.equal(commandSafeMessageText("hello"), "hello");
+  assert.equal(commandSafeMessageText("- bullet"), "\u200B- bullet");
 });
 
 test("formatIncomingForPrompt is generic", () => {

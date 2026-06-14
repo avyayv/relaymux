@@ -127,13 +127,21 @@ export async function sendMessage(config: any, text: string, io: any = process) 
 
   const commandConfig = send.command || {};
   for (const chunk of chunks) {
-    const argv = buildAdapterArgv(commandConfig, messageContext(config, { text: chunk }));
+    const argv = buildAdapterArgv(commandConfig, messageContext(config, { text: commandSafeMessageText(chunk) }));
     await runCommandAsync(argv[0], argv.slice(1), {
       cwd: expandPath(commandConfig.cwd || "~"),
       timeoutMs: Number(commandConfig.timeoutMs || 60000),
       maxBuffer: Number(commandConfig.maxBufferBytes || 10 * 1024 * 1024),
     });
   }
+}
+
+export function commandSafeMessageText(text) {
+  const value = String(text || "");
+  // imsg 0.8.x does not accept option values that start with "-" when they are
+  // passed as the argv element after --text. Prefix an invisible character so
+  // bullet-list replies like "- fixed X" do not get parsed as more flags.
+  return value.startsWith("-") ? `\u200B${value}` : value;
 }
 
 export function messageContext(config, extra = {}) {

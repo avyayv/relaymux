@@ -121,6 +121,10 @@ async function handleSetup(flags, io) {
   const status = handleDoctor(configInfo, io);
   if (status === 0) {
     io.stdout.write("Setup complete. relaymux is ready.\n");
+    io.stdout.write("Next steps:\n");
+    io.stdout.write("  1. Text the configured chat; relaymux should reply from the background LaunchAgent.\n");
+    io.stdout.write("  2. Run `relaymux status` to inspect the daemon and any tmux agent tabs.\n");
+    io.stdout.write("  3. Use `relaymux launch --repo <path> --agent pi --prompt <task>` for a manual first agent.\n");
   } else {
     io.stderr.write("Setup completed, but doctor found missing requirements. Fix the missing checks above and re-run `relaymux doctor`.\n");
   }

@@ -36,6 +36,8 @@ relaymux doctor
 relaymux status
 ```
 
+`relaymux setup` is the new-user path: it creates `~/.relaymux/config.json`, discovers recent `imsg` chats when possible, installs/loads the macOS LaunchAgent, and prints next steps. A healthy install should show `ok background-service ... LaunchAgent loaded` in `relaymux doctor`. If it says the service is not loaded, run `relaymux restart-launch-agent` from a normal terminal.
+
 `relaymux setup` tries to list recent Messages chats through `imsg chats --json` and prompts you to choose one. If discovery does not work, pass the chat id or phone number yourself:
 
 ```bash
@@ -287,6 +289,17 @@ tmux kill-session -t agents
 It does not uninstall relaymux or stop the LaunchAgent.
 
 ## Troubleshooting
+
+### Background service unloaded after a restart
+
+If `relaymux status-launch-agent` says `not loaded`, reload it from a normal terminal:
+
+```bash
+relaymux restart-launch-agent
+relaymux status-launch-agent
+```
+
+relaymux protects against the common self-restart trap: when `restart-launch-agent` is invoked from inside the relaymux LaunchAgent, it now schedules a short-lived helper LaunchAgent to do the reload after the current chat turn has time to reply. Direct `launchctl bootout` from inside the daemon can kill the daemon before it marks the message seen.
 
 ### Messages permissions
 

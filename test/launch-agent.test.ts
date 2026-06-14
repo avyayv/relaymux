@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { defaultConfig } from "../src/config.js";
-import { installLaunchAgent, parseLaunchCtlPrint, renderLaunchAgentPlist } from "../src/launch-agent.js";
+import { installLaunchAgent, isCurrentLaunchAgent, parseLaunchCtlPrint, renderLaunchAgentPlist, renderLaunchAgentReloadScript } from "../src/launch-agent.js";
 
 
 test("renderLaunchAgentPlist escapes XML and includes daemon args", () => {
@@ -69,6 +69,36 @@ test("installLaunchAgent direct dry-run does not invoke tmux or set tmux environ
   assert.doesNotMatch(stdout, /<string>tmux<\/string>/);
   assert.doesNotMatch(stdout, /TMUX/);
   assert.doesNotMatch(stdout, /RELAYMUX_SESSION/);
+});
+
+test("isCurrentLaunchAgent detects inherited launchd service context", () => {
+  const config = {
+    ...defaultConfig(),
+    daemon: {
+      ...defaultConfig().daemon,
+      launchAgentLabel: "com.example.relaymux",
+    },
+  };
+
+  assert.equal(isCurrentLaunchAgent(config, { XPC_SERVICE_NAME: "com.example.relaymux" }), true);
+  assert.equal(isCurrentLaunchAgent(config, { XPC_SERVICE_NAME: "com.example.other" }), false);
+});
+
+test("renderLaunchAgentReloadScript bootouts and bootstraps the main service", () => {
+  const script = renderLaunchAgentReloadScript({
+    delaySeconds: 15,
+    domain: "gui/501",
+    helperPlistPath: "/tmp/helper.plist",
+    helperTarget: "gui/501/com.example.relaymux.reload.1",
+    plistPath: "/tmp/main.plist",
+    scriptPath: "/tmp/helper.sh",
+    target: "gui/501/com.example.relaymux",
+  });
+
+  assert.match(script, /sleep 15/);
+  assert.match(script, /launchctl bootout gui\/501\/com.example.relaymux/);
+  assert.match(script, /launchctl bootstrap gui\/501 \/tmp\/main.plist/);
+  assert.match(script, /com.example.relaymux.reload.1/);
 });
 
 test("parseLaunchCtlPrint extracts running status", () => {

@@ -54,6 +54,7 @@ export function defaultConfig(env = process.env) {
       launchAgentLabel: "com.relaymux.daemon",
       launchMode: "direct",
       supervisorPollMs: 15000,
+      selfRestartDelayMs: 30000,
       logDir,
     },
     orchestrator: {

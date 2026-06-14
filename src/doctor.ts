@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { defaultConfigPath, legacyDefaultConfigPath, resolveLogDir, resolveStateDir } from "./config.js";
 import { runCommand } from "./process.js";
-import { launchAgentPath } from "./launch-agent.js";
+import { getLaunchAgentStatus, launchAgentPath } from "./launch-agent.js";
 import { defaultRelaymuxHome } from "./paths.js";
 import { webhookStatus } from "./webhook.js";
 
@@ -97,10 +97,16 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
     ok: !webhook.tokenFileExists || webhook.tokenFileMode === "0600",
     detail: webhook.tokenFileExists ? `${webhook.tokenFile} mode ${webhook.tokenFileMode}` : `will be created at ${webhook.tokenFile}`,
   });
+  const launchAgent: any = getLaunchAgentStatus(config);
+  const daemonEnabled = config.daemon?.enabled !== false;
   checks.push({
     name: "background-service",
-    ok: true,
-    detail: `direct/background LaunchAgent outside tmux: ${launchAgentPath(config)}`,
+    ok: !daemonEnabled || !launchAgent.supported || launchAgent.loaded,
+    detail: daemonEnabled
+      ? launchAgent.supported
+        ? `direct/background LaunchAgent ${launchAgent.loaded ? "loaded" : "not loaded"}: ${launchAgentPath(config)}${launchAgent.detail ? ` (${launchAgent.detail})` : ""}`
+        : `direct/background LaunchAgent unsupported on ${process.platform}: ${launchAgentPath(config)}`
+      : "disabled in config",
   });
 
   for (const [name, agent] of Object.entries((config.agents ?? {}) as Record<string, any>)) {
