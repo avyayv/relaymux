@@ -20,6 +20,12 @@ export function defaultConfig(env = process.env) {
       sessionPrefix: "rmx",
       extraWindows: [],
     },
+    launchNotifications: {
+      onExit: "never",
+      replyMode: "imessage",
+      tailLines: 80,
+      tailBytes: 4000,
+    },
     imessage: {
       chatId: "CHAT_ID_OR_PHONE",
       recipient: "+15555550123",
@@ -76,8 +82,8 @@ export function defaultConfig(env = process.env) {
         promptMode: "arg",
       },
       codex: {
-        description: "Codex CLI template with model/effort flags. Edit flags to match your local install.",
-        command: ["codex", "--model", "gpt-5.5", "--reasoning-effort", "xhigh", "{prompt}"],
+        description: "Codex CLI template. Edit flags to match your local install.",
+        command: ["codex", "--model", "gpt-5.5", "{prompt}"],
         promptMode: "arg",
       },
       claude: {

@@ -121,6 +121,12 @@ New relaymux-managed prompts, run records, completion notes, logs, and generated
     "sessionMode": "shared",
     "sessionPrefix": "rmx"
   },
+  "launchNotifications": {
+    "onExit": "never",
+    "replyMode": "imessage",
+    "tailLines": 80,
+    "tailBytes": 4000
+  },
   "daemon": {
     "enabled": true,
     "host": "127.0.0.1",
@@ -158,7 +164,7 @@ New relaymux-managed prompts, run records, completion notes, logs, and generated
       "promptMode": "arg"
     },
     "codex": {
-      "command": ["codex", "--model", "gpt-5.5", "--reasoning-effort", "xhigh", "{prompt}"],
+      "command": ["codex", "--model", "gpt-5.5", "{prompt}"],
       "promptMode": "arg"
     },
     "claude": {
@@ -242,6 +248,46 @@ relaymux notify \
 `--reply-mode imessage` asks the daemon to send a user-visible text update. `--reply-mode none` still re-prompts the daemon/orchestrator path, but suppresses the outgoing iMessage. Use it for progress notes that should affect the orchestrator's context or logs without texting the user. Whether that context persists depends on your orchestrator command; the default Pi command uses `--continue` with a relaymux session directory.
 
 The idempotency key is a stable de-duplication string for one logical update. If a delegated agent retries the same completion notification, reuse the same key so relaymux does not send duplicate text messages.
+
+## Delegated-run guardrails
+
+`relaymux doctor` statically checks configured agent command templates for known stale flags before you launch. For Codex, it reports `--reasoning-effort` as an error because current Codex CLI releases reject that flag; remove the flag/value from `~/.relaymux/config.json` and rerun `relaymux doctor`. `relaymux launch` runs the same fatal validation before opening tmux, so a stale known flag fails in the caller instead of disappearing into a tmux tab.
+
+Every tmux launch records local `started` and `completed` events. For user-visible completion that does not depend on the subagent following prompt instructions, opt into wrapper-level exit notifications:
+
+```json
+{
+  "launchNotifications": {
+    "onExit": "failure",
+    "replyMode": "imessage",
+    "tailLines": 80,
+    "tailBytes": 4000
+  }
+}
+```
+
+`onExit` may be `never` (default), `failure`, or `always`. `failure` sends a relaymux notification only for nonzero exits; `always` also sends success notifications. `replyMode: "imessage"` asks the daemon to send a chat update. Nonzero auto-notifications include the run name, run id, exit code, and a bounded recent tmux output tail when available. You can also set this for one launch:
+
+```bash
+relaymux launch \
+  --repo ~/code/my-app \
+  --agent codex \
+  --name email-draft \
+  --notify-on-exit always \
+  --notify-reply-mode imessage \
+  --prompt @prompt.txt
+```
+
+Still include an explicit completion instruction in delegated prompts for richer summaries:
+
+```text
+When done or blocked, run:
+relaymux notify --from email-draft --reply-mode imessage \
+  --idempotency-key email-draft-<date>-done \
+  --message "Finished: summary, validation, blockers."
+```
+
+The wrapper-level notification is a fallback; the explicit `relaymux notify` should carry the useful human summary.
 
 ## Migrating old relaymux-managed files
 

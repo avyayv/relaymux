@@ -21,6 +21,8 @@ test("writeDefaultConfig creates a loadable config", () => {
   assert.equal(config.tmux.sessionMode, "shared");
   assert.ok(config.orchestrator.command);
   assert.ok(config.agents.codex);
+  assert.equal(config.agents.codex.command.includes("--reasoning-effort"), false);
+  assert.equal(config.launchNotifications.onExit, "never");
 });
 
 test("default paths live under RELAYMUX_HOME when provided", () => {

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { defaultConfigPath, legacyDefaultConfigPath, resolveLogDir, resolveStateDir } from "./config.js";
+import { validateConfiguredAgentCommand } from "./command-validation.js";
 import { runCommand } from "./process.js";
 import { getLaunchAgentStatus, launchAgentPath } from "./launch-agent.js";
 import { defaultRelaymuxHome } from "./paths.js";
@@ -115,8 +116,28 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
     checks.push({
       name: `agent:${name}`,
       ok: Boolean(executable),
+      fatal: false,
       detail: executable || `${command || "missing command"} not found on PATH`,
     });
+
+    const findings = validateConfiguredAgentCommand(name, agent, { location: `agents.${name}` });
+    if (findings.length === 0) {
+      checks.push({
+        name: `agent:${name}-command`,
+        ok: true,
+        detail: "command template passed static checks",
+      });
+    } else {
+      for (const finding of findings) {
+        checks.push({
+          name: `agent:${name}-command`,
+          ok: false,
+          severity: finding.severity,
+          fatal: finding.fatal,
+          detail: finding.detail,
+        });
+      }
+    }
   }
 
   return checks;

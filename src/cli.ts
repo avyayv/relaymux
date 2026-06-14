@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 
 import { parseArgv } from "./args.js";
 import { buildAgentInvocation, buildTmuxShellCommand, buildTmuxShellScript, quoteArgv, renderTemplate, shellExportBlock } from "./command.js";
+import { assertNoFatalCommandFindings } from "./command-validation.js";
 import { collectDoctorChecks } from "./doctor.js";
 import { defaultConfigPath, loadConfig, resolveLogDir, resolveStateDir, writeConfig, writeDefaultConfig } from "./config.js";
 import { runDaemon } from "./daemon.js";
@@ -214,6 +215,7 @@ function handleLaunch(flags, configInfo, stateDir, io) {
   if (!agentConfig) {
     throw new Error(`Unknown agent "${agentName}". Add it to your config under agents.`);
   }
+  assertNoFatalCommandFindings(agentName, agentConfig, { location: `agents.${agentName}` });
 
   const prompt = resolvePrompt(flags);
   const runId = flags.runId || makeRunId();
@@ -222,6 +224,7 @@ function handleLaunch(flags, configInfo, stateDir, io) {
   const sessionInfo = resolveLaunchSession({ flags, config, env: io.env, repo, workdir, name });
   const session = sessionInfo.session;
   const holdOnExit = flags.hold ?? config.holdOnExit ?? false;
+  const launchNotification = resolveLaunchNotification(flags, config);
 
   if (flags.dryRun) {
     const promptFile = path.join(stateDir, "prompts", `${runId}.txt`);
@@ -231,6 +234,7 @@ function handleLaunch(flags, configInfo, stateDir, io) {
       cliPath: process.argv[1],
       configPath: configInfo.path,
       holdOnExit,
+      launchNotification,
       name,
       prompt,
       promptFile,
@@ -261,6 +265,7 @@ function handleLaunch(flags, configInfo, stateDir, io) {
     cliPath: process.argv[1],
     configPath: configInfo.path,
     holdOnExit,
+    launchNotification,
     name,
     prompt,
     promptFile,
@@ -601,6 +606,29 @@ function buildLaunchShellScript(agentName, agentConfig, context) {
   return buildTmuxShellScript(invocation, context);
 }
 
+function resolveLaunchNotification(flags, config) {
+  const configured = config.launchNotifications || {};
+  const onExit = String(flags.notifyOnExit ?? configured.onExit ?? configured.notifyOnExit ?? "never");
+  const replyMode = String(flags.notifyReplyMode ?? configured.replyMode ?? "imessage");
+  const tailLines = normalizePositiveInteger(flags.notifyTailLines ?? configured.tailLines, 80);
+  const tailBytes = normalizePositiveInteger(flags.notifyTailBytes ?? configured.tailBytes, 4000);
+
+  if (!["never", "failure", "always"].includes(onExit)) {
+    throw new Error("--notify-on-exit / launchNotifications.onExit must be never, failure, or always");
+  }
+  if (!["imessage", "none"].includes(replyMode)) {
+    throw new Error("--notify-reply-mode / launchNotifications.replyMode must be imessage or none");
+  }
+
+  return { onExit, replyMode, tailLines, tailBytes };
+}
+
+function normalizePositiveInteger(value, fallback) {
+  const number = Number(value ?? fallback);
+  if (!Number.isFinite(number) || number < 1) return fallback;
+  return Math.floor(number);
+}
+
 function handleStatus(flags, configInfo, stateDir, io) {
   const config = configInfo.config;
   const session = flags.session ? String(flags.session) : undefined;
@@ -705,9 +733,16 @@ function targetTab(target) {
 function handleDoctor(configInfo, io) {
   const checks = collectDoctorChecks(configInfo.config, configInfo, io.env);
   for (const check of checks) {
-    io.stdout.write(`${check.ok ? "ok" : "missing"}\t${check.name}\t${check.detail}\n`);
+    io.stdout.write(`${doctorStatusLabel(check)}\t${check.name}\t${check.detail}\n`);
   }
-  return checks.every((check) => check.ok || check.name.startsWith("agent:")) ? 0 : 1;
+  return checks.every((check) => check.ok || check.fatal === false || check.severity === "warning") ? 0 : 1;
+}
+
+function doctorStatusLabel(check) {
+  if (check.ok) return "ok";
+  if (check.severity === "warning") return "warning";
+  if (check.severity === "error") return "error";
+  return "missing";
 }
 
 function resolvePrompt(flags) {
@@ -860,7 +895,7 @@ Usage:
   relaymux restart-launch-agent [--dry-run] [--no-load]
   relaymux status-launch-agent [--json]
   relaymux uninstall-launch-agent
-  relaymux launch --repo <path> --agent <name> --prompt <text|@file> [--name <name>]
+  relaymux launch --repo <path> --agent <name> --prompt <text|@file> [--name <name>] [--notify-on-exit never|failure|always]
   relaymux ask <text> [--no-wait] [--reply-mode imessage|none]
   relaymux status [--json] [--session <name>]
   relaymux notify [--run-id <id>] [--reply-mode imessage|none] [--message <text>]
@@ -894,6 +929,10 @@ Launch options:
   --print-command            Print the tmux tab command before launching
   --hold                     Keep a shell open after the agent exits
   --attach                   Print attach command after launch
+  --notify-on-exit <mode>    Auto relaymux notify on agent exit: never (default), failure, or always
+  --notify-reply-mode <mode> imessage sends chat updates; none records quiet completion context
+  --notify-tail-lines <n>    Recent tmux output lines to include for nonzero auto notifications
+  --notify-tail-bytes <n>    Max bytes of recent tmux output in nonzero auto notifications
 
 Background service options:
   --no-load                  Write the LaunchAgent plist without loading it

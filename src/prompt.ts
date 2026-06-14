@@ -20,6 +20,7 @@ Delegating with relaymux:
 - Ask subagents to report meaningful completion or blockers with relaymux notify.
 - Use --reply-mode imessage for user-visible completion updates and --reply-mode none for quiet context-only updates.
 - Include an idempotency key when asking a subagent to notify, so retries do not duplicate chat updates.
+- When a delegated run must notify even if the model forgets, add relaymux launch --notify-on-exit failure or --notify-on-exit always with --notify-reply-mode imessage. Use this deliberately to avoid spam.
 
 Example completion command for a subagent:
 relaymux notify --from <subagent-name> --reply-mode imessage --idempotency-key <stable-key> --message "Finished: summary, validation, blockers."
@@ -52,5 +53,6 @@ export function buildRuntimePromptContext({ configPath, homeDir, stateDir, sessi
 - default launch behavior: ${defaultLaunchBehavior}
 - separate session escape hatch: add --session <name> only when the user explicitly asks for a separate/new/named tmux session
 - per-worktree escape hatch: add --session-mode per-worktree only when the user explicitly asks for per-worktree sessions
-- completion helper shape: relaymux notify --from <name> --reply-mode imessage --idempotency-key <stable-key> --message <summary>`;
+- completion helper shape: relaymux notify --from <name> --reply-mode imessage --idempotency-key <stable-key> --message <summary>
+- launch notification fallback: add --notify-on-exit failure|always --notify-reply-mode imessage when the wrapper itself should notify on exit`;
 }
