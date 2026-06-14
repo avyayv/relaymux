@@ -84,6 +84,7 @@ export function buildTmuxShellScript(invocation, context) {
     "--repo",
     context.repo,
   ];
+  const launchNotification = normalizeLaunchNotification(context.launchNotification);
 
   const baseEnv = {
     RELAYMUX_AGENT: context.agent,
@@ -103,7 +104,8 @@ export function buildTmuxShellScript(invocation, context) {
     (invocation.stdinFile ? ` < ${shellQuote(invocation.stdinFile)}` : "");
 
   const startedNotify = quoteArgv([...notifyBase, "--event", "started", "--message", "started"]);
-  const completedNotify = `${quoteArgv([...notifyBase, "--event", "completed", "--exit-code"])} "$status"`;
+  const completedNotify = `${quoteArgv([...notifyBase, "--event", "completed", "--exit-code"])} "$status" --message "$completion_message"`;
+  const exitNotificationBlock = buildExitNotificationBlock(notifyBase, launchNotification);
   const holdOrExit = context.holdOnExit
     ? 'printf "\\nrelaymux: holding shell open after exit %s\\n" "$status"; exec "${SHELL:-/bin/sh}"'
     : 'exit "$status"';
@@ -116,8 +118,14 @@ export function buildTmuxShellScript(invocation, context) {
     `${startedNotify} >/dev/null 2>&1 || true`,
     agentCommand,
     "status=$?",
+    'if [ "$status" -eq 0 ]; then',
+    '  completion_message="relaymux run $RELAYMUX_NAME ($RELAYMUX_RUN_ID) completed with exit 0"',
+    "else",
+    '  completion_message="relaymux run $RELAYMUX_NAME ($RELAYMUX_RUN_ID) failed with exit $status"',
+    "fi",
     `${completedNotify} >/dev/null 2>&1 || true`,
-    'printf "\\nrelaymux: completed %s with exit %s\\n" "$RELAYMUX_RUN_ID" "$status"',
+    ...exitNotificationBlock,
+    'printf "\\nrelaymux: completed %s (%s) with exit %s\\n" "$RELAYMUX_RUN_ID" "$RELAYMUX_NAME" "$status"',
     holdOrExit,
   ].join("\n");
 }
@@ -135,4 +143,57 @@ export function shellExportBlock(env) {
       return `${key}=${shellQuote(value)}; export ${key}`;
     })
     .join("\n");
+}
+
+function buildExitNotificationBlock(notifyBase, notification) {
+  if (notification.onExit === "never") return [];
+
+  const shouldNotifyLines = notification.onExit === "always"
+    ? ["relaymux_should_notify=1"]
+    : [
+        "relaymux_should_notify=0",
+        'if [ "$status" -ne 0 ]; then relaymux_should_notify=1; fi',
+      ];
+  const notifyCommand = `${quoteArgv([...notifyBase, "--event", "completed", "--exit-code"])} "$status" --reply-mode ${shellQuote(notification.replyMode)} --idempotency-key "$relaymux_idempotency_key" --message "$relaymux_auto_message"`;
+
+  return [
+    ...shouldNotifyLines,
+    'if [ "$relaymux_should_notify" = "1" ]; then',
+    "  relaymux_tail=",
+    '  if [ "$status" -ne 0 ] && command -v tmux >/dev/null 2>&1 && [ -n "${TMUX_PANE:-}" ]; then',
+    `    relaymux_tail="$(tmux capture-pane -pt "$TMUX_PANE" -S -${notification.tailLines} 2>/dev/null | tail -n ${notification.tailLines} | tail -c ${notification.tailBytes})"`,
+    "  fi",
+    '  if [ -n "$relaymux_tail" ]; then',
+    `    relaymux_auto_message="$(printf "%s\\n\\nRecent tmux output (last ${notification.tailLines} lines, ${notification.tailBytes} bytes max):\\n%s" "$completion_message" "$relaymux_tail")"`,
+    "  else",
+    '    relaymux_auto_message="$completion_message"',
+    "  fi",
+    '  relaymux_idempotency_key="$RELAYMUX_RUN_ID-exit-$status"',
+    `  if ! ${notifyCommand} >/dev/null; then`,
+    '    printf "relaymux: exit notification failed for %s (%s) with exit %s\\n" "$RELAYMUX_RUN_ID" "$RELAYMUX_NAME" "$status" >&2',
+    "  fi",
+    "fi",
+  ];
+}
+
+function normalizeLaunchNotification(notification: any = {}) {
+  const onExit = notification.onExit || "never";
+  const replyMode = notification.replyMode || "imessage";
+  const tailLines = normalizePositiveInteger(notification.tailLines, 80);
+  const tailBytes = normalizePositiveInteger(notification.tailBytes, 4000);
+
+  if (!["never", "failure", "always"].includes(onExit)) {
+    throw new Error(`launchNotifications.onExit must be never, failure, or always (got ${JSON.stringify(onExit)})`);
+  }
+  if (!["imessage", "none"].includes(replyMode)) {
+    throw new Error(`launchNotifications.replyMode must be imessage or none (got ${JSON.stringify(replyMode)})`);
+  }
+
+  return { onExit, replyMode, tailLines, tailBytes };
+}
+
+function normalizePositiveInteger(value, fallback) {
+  const number = Number(value ?? fallback);
+  if (!Number.isFinite(number) || number < 1) return fallback;
+  return Math.floor(number);
 }

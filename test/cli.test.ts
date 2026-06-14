@@ -154,6 +154,34 @@ test("launch dry-run honors explicit session grouping", async () => {
   assert.match(harness.stdout, /# tmux session: task-group \(explicit; --session\)/);
 });
 
+test("launch dry-run includes opt-in exit notification wrapper", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-repo-"));
+  const harness = makeIo();
+  const code = await main([
+    "--config",
+    writeTempConfig("launch-notify-on-exit"),
+    "launch",
+    "--repo",
+    dir,
+    "--agent",
+    "custom",
+    "--name",
+    "api-fix",
+    "--prompt",
+    "noop",
+    "--notify-on-exit",
+    "failure",
+    "--notify-reply-mode",
+    "imessage",
+    "--dry-run",
+  ], harness.io);
+
+  assert.equal(code, 0);
+  assert.match(harness.stdout, /relaymux_should_notify=0/);
+  assert.match(harness.stdout, /--reply-mode imessage/);
+  assert.match(harness.stdout, /--idempotency-key "\$relaymux_idempotency_key"/);
+});
+
 test("install-launch-agent dry-run runs the daemon directly by default", async () => {
   const harness = makeIo();
   const code = await main([

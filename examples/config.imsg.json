@@ -6,6 +6,12 @@
     "sessionMode": "shared",
     "sessionPrefix": "rmx"
   },
+  "launchNotifications": {
+    "onExit": "never",
+    "replyMode": "imessage",
+    "tailLines": 80,
+    "tailBytes": 4000
+  },
   "imessage": {
     "chatId": "CHAT_ID_OR_PHONE",
     "recipient": "+15555550123",
@@ -52,7 +58,7 @@
   },
   "agents": {
     "pi": { "command": ["pi", "{prompt}"], "promptMode": "arg" },
-    "codex": { "command": ["codex", "--model", "gpt-5.5", "--reasoning-effort", "xhigh", "{prompt}"], "promptMode": "arg" },
+    "codex": { "command": ["codex", "--model", "gpt-5.5", "{prompt}"], "promptMode": "arg" },
     "claude": { "command": ["claude", "{prompt}"], "promptMode": "arg" }
   }
 }
